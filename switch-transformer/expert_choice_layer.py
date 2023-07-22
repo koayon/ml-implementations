@@ -28,7 +28,7 @@ class ExpertChoiceFFN(nn.Module):
     ) -> None:
         super().__init__()
 
-        # Either choose k or set it from the capacity factor
+        # Either choose k or set it from the capacity factor (c)
         assert (topk > 0) or (c > 0)
 
         self.hidden_size = hidden_size
@@ -42,6 +42,7 @@ class ExpertChoiceFFN(nn.Module):
         self.experts = nn.ModuleList([expert for _ in range(num_experts)])
         self.expert_dropout = nn.Dropout(dropout)
         self.topk = topk
+        self.c = c
 
     def forward_individual_expert_choice(
         self,
@@ -93,7 +94,10 @@ class ExpertChoiceFFN(nn.Module):
 
         Return: shape (batch, seq, hidden_size)
         """
-        batch_dim = x.shape[0]
+        batch_dim, seq_length, _hidden_size = x.shape
+
+        if self.c > 0:
+            self.k = batch_dim * seq_length * self.c / self.num_experts
 
         x = rearrange(x, "b s h -> (b s) h")
         h = self.router(x)  # bs num_experts
