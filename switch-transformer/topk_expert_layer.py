@@ -1,13 +1,31 @@
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import torch as t
 from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
 
+ROUTERS = ["linear", "hash", ...]
+
+
+class HashRouter(nn.Module):
+    def __init__(
+        self,
+        *,
+        hidden_size: int,
+        num_experts: int,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+
+    def forward(self):
+        "Should use the built up hash table for the tokens to assign them"
+        raise NotImplementedError
+
 
 class ExpertFFN(nn.Module):
-    router: nn.Linear
+    routing_model: nn.Module
     experts: nn.ModuleList
     expert_dropout: nn.Dropout
 
@@ -19,12 +37,15 @@ class ExpertFFN(nn.Module):
         dropout: float,
         expert: nn.Module,
         topk: int,
+        router: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.num_experts = num_experts
 
-        self.router = nn.Linear(hidden_size, num_experts)
+        self.router = (
+            router if router is not None else nn.Linear(hidden_size, num_experts)
+        )
         self.experts = nn.ModuleList([expert for _ in range(num_experts)])
         self.expert_dropout = nn.Dropout(dropout)
         self.topk = topk
@@ -84,7 +105,7 @@ class ExpertFFN(nn.Module):
             for expert_num in range(self.num_experts)
         ]  # list[bs hidden_size]
 
-        # Sum expert results together
+        # Aggregate expert results together
         expert_results_stack = t.stack(
             expert_results, dim=0
         )  # num_experts bs hidden_size
