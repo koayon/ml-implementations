@@ -5,7 +5,7 @@ import torch as t
 from torch import nn
 from transformer_block import GPT2Block
 
-import utils
+import helpers
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class GPT2(nn.Module):
     token_embedding: nn.Embedding
     pos_embedding: nn.Embedding
     ln: nn.LayerNorm
-    blocks: utils.StaticModuleList[GPT2Block]
+    blocks: helpers.StaticModuleList[GPT2Block]
 
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -39,7 +39,7 @@ class GPT2(nn.Module):
             config.max_position_embeddings, config.hidden_size
         )
         self.dropout = nn.Dropout(config.dropout)
-        self.blocks: utils.StaticModuleList[GPT2Block] = utils.StaticModuleList(
+        self.blocks: helpers.StaticModuleList[GPT2Block] = helpers.StaticModuleList(
             [
                 GPT2Block(
                     config.hidden_size,
