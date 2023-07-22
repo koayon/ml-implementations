@@ -10,25 +10,7 @@ ROUTERS = ["linear", "hash", ...]
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 
-class HashRouter(nn.Module):
-    def __init__(
-        self,
-        *,
-        hidden_size: int,
-        num_experts: int,
-        device=device,
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
-        self.device = device
-
-    def forward(self):
-        "Should use the built up hash table for the tokens to assign them"
-        raise NotImplementedError
-
-
-class ExpertFFN(nn.Module):
+class ExpertChoiceFFN(nn.Module):
     routing_model: nn.Module
     experts: nn.ModuleList
     expert_dropout: nn.Dropout
@@ -40,10 +22,15 @@ class ExpertFFN(nn.Module):
         num_experts: int,
         dropout: float,
         expert: nn.Module,
-        topk: int,
+        topk: int = 0,
+        c: float = 0,
         router: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
+
+        # Either choose k or set it from the capacity factor
+        assert (topk > 0) or (c > 0)
+
         self.hidden_size = hidden_size
         self.num_experts = num_experts
 
@@ -56,31 +43,46 @@ class ExpertFFN(nn.Module):
         self.expert_dropout = nn.Dropout(dropout)
         self.topk = topk
 
-    def forward_individual_expert(
-        self, expert_num: int, chosen_expert_index: t.Tensor, G: t.Tensor, x: t.Tensor
+    def forward_individual_expert_choice(
+        self,
+        expert_num: int,
+        chosen_token_index: t.Tensor,
+        G: t.Tensor,
+        x: t.Tensor,
     ):
         """
         Set up to be parallelisable
         expert_num: The expert that we're using for forward
-        chosen_expert_index: bs k
-        G: bs k
+        chosen_token_index: k num_experts
+        G: num_experts k
         x: bs hidden_size
         """
 
+        batch_seq_size = x.shape[0]
+
         # Select top-k expert, with one-hot vector
         P = nn.functional.one_hot(
-            chosen_expert_index,
-        )  # bs k num_experts (one-hot)
+            chosen_token_index, num_classes=batch_seq_size
+        )  # k num_experts (one-hot)
         print(f"{P.shape=}")
 
+        P = rearrange(P, "k num_experts bs -> bs k num_experts")  # bs k num_experts
+        print(f"{P.shape=}")
+
+        # Extract relevant sections of P, G
         P_expert = P[..., expert_num]  # bs k
+        G_expert = G[expert_num, :]  # k
 
-        tokens_for_expert = einsum("bs k, bs hidden_size -> k hidden_size", P_expert, x)
+        tokens_for_expert = einsum(
+            "bs k, bs hidden_size -> k hidden_size", P_expert, x
+        )  # k hidden_size
 
+        # Forward pass through the expert network
         E = self.experts[expert_num](tokens_for_expert)  # k hidden_size
-        print(E.shape)
 
-        x_out = einsum("bs k, k hidden_size -> bs hidden_size", G, E)  # bs hidden_size
+        x_out = t.einsum(
+            "bs k, k, k hidden_size -> bs hidden_size", P_expert, G_expert, E
+        )  # bs hidden_size
 
         return x_out
 
@@ -96,17 +98,21 @@ class ExpertFFN(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         h = self.router(x)  # bs num_experts
 
+        print(h.shape)
+
         # Calculate router score or Gate Value
         S = t.softmax(h, dim=-1)  # bs num_experts
-        G, chosen_expert_index = t.topk(S, k=2, dim=-1)  # bs k each
+        G, chosen_token_index = t.topk(S, k=2, dim=0)  # k num_experts each
 
         print(f"{G.shape=}")
-        print(f"{chosen_expert_index.shape=}")
+        print(f"{chosen_token_index.shape=}")
+
+        print(chosen_token_index)
 
         # Collect expert results from parallelised expert forward
         expert_results = [
-            self.forward_individual_expert(
-                expert_num=expert_num, G=G, x=x, chosen_expert_index=chosen_expert_index
+            self.forward_individual_expert_choice(
+                expert_num=expert_num, G=G, x=x, chosen_token_index=chosen_token_index
             )
             for expert_num in range(self.num_experts)
         ]  # list[bs hidden_size]
@@ -123,14 +129,12 @@ class ExpertFFN(nn.Module):
 
 
 def main():
-    expert_layer = ExpertFFN(
+    expert_layer = ExpertChoiceFFN(
         hidden_size=16, num_experts=4, dropout=0.1, expert=nn.Linear(16, 16), topk=2
     )
 
-    x = t.rand(size=(3, 4, 16))
+    x = t.rand(size=(3, 4, 16))  # batch seq hidden_size
 
-    print("x: ", x)
-    print("----------------")
     print(f"{expert_layer(x)}")
 
 
