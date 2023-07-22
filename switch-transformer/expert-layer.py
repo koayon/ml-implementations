@@ -5,27 +5,23 @@ from einops import rearrange
 from fancy_einsum import einsum
 from torch import nn
 
-ACTIVATION_FUNCTIONS = dict(relu=nn.ReLU(), gelu=nn.GELU())
 
-
-class ExpertLayer(nn.Module):
+class SimpleExpertFFN(nn.Module):
     router: nn.Linear
     experts: nn.ModuleList
     expert_dropout: nn.Dropout
 
     def __init__(
         self,
+        *,
         hidden_size: int,
         num_experts: int,
-        expert_size: int,
         dropout: float,
         expert: nn.Module,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        self.expert_size = expert_size
-        self.dropout = dropout
 
         self.router = nn.Linear(hidden_size, num_experts)
         self.experts = nn.ModuleList([expert for _ in range(num_experts)])
@@ -35,6 +31,8 @@ class ExpertLayer(nn.Module):
         """
         x: batch seq hidden_size
         router: hidden_size num_experts
+
+        Return: shape (batch, seq, hidden_size)
         """
         batch_dim = x.shape[0]
 
@@ -47,25 +45,14 @@ class ExpertLayer(nn.Module):
         # Select top-1 expert, with one-hot vector
         P = nn.functional.one_hot(chosen_expert_index)  # bs num_experts (one-hot)
 
-        # For each expert, they need to know which tokens they are transforming
-        # expert_tokens = {
-        #     expert_num: [token_num]
-        #     for token_num, expert_num in enumerate(chosen_expert_index)
-        # }
-
         # Calculate ExpertFFN result
-        E_list = []  # batch seq hidden_size
+        E_list = []  # list[batch seq hidden_size]
 
         for token_index, expert_index in enumerate(chosen_expert_index):
-            E_list.append(self.experts[expert_index](x[token_index, :]))
+            E_list.append(
+                self.expert_dropout(self.experts[expert_index](x[token_index, :]))
+            )
         E = t.stack(E_list, dim=0)  # bs hidden_size
-
-        print("P")
-        print(P)
-        print("G")
-        print(G)
-        print("E")
-        print(E)
 
         y = einsum(
             "bs_keep num_experts, bs, bs hidden_size -> bs_keep hidden_size",
@@ -79,10 +66,17 @@ class ExpertLayer(nn.Module):
         return y
 
 
-expert_layer = ExpertLayer(16, 2, 16, 0.1, expert=nn.Linear(16, 16))
+def main():
+    expert_layer = SimpleExpertFFN(
+        hidden_size=16, num_experts=2, dropout=0.1, expert=nn.Linear(16, 16)
+    )
 
-x = t.rand(size=(1, 4, 16))
+    x = t.rand(size=(2, 4, 16))
 
-print("x: ", x)
-print("----------------")
-print(f"{expert_layer(x)}")
+    print("x: ", x)
+    print("----------------")
+    print(f"{expert_layer(x)}")
+
+
+if __name__ == "__main__":
+    main()
