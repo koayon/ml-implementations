@@ -111,8 +111,12 @@ class ExpertChoiceFFN(nn.Module):
         """
         batch_dim, seq_length, _hidden_size = x.shape
 
+        # Use the capacity factor to set k
         if self.c > 0:
             self.k = batch_dim * seq_length * self.c / self.num_experts
+
+        # If there aren't enough tokens in the input to select top k, reduce k
+        self.k = min(int(self.k), batch_dim * seq_length)
 
         x = rearrange(x, "b s h -> (b s) h")
         h = self.router(x)  # bs num_experts
@@ -121,7 +125,7 @@ class ExpertChoiceFFN(nn.Module):
 
         # Calculate router score or Gate Value
         S = t.softmax(h, dim=-1)  # bs num_experts
-        G, chosen_token_index = t.topk(S, k=2, dim=0)  # k num_experts each
+        G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         if cache is not None and self.layer_id.startswith("expert_layer"):
             cache[self.layer_id] = chosen_token_index

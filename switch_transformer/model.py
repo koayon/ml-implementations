@@ -3,6 +3,7 @@ from typing import Any, Optional, OrderedDict, Tuple, Union
 
 import numpy as np
 import plotly.express as px
+import tiktoken
 import torch as t
 from einops import rearrange, repeat
 from fancy_einsum import einsum
@@ -13,15 +14,20 @@ from switch_transformer.expert_choice_layer import ExpertChoiceFFN
 
 
 class SparseMoETransformer(nn.Module):
+    token_embedding: nn.Embedding
+    pos_embedding: nn.Embedding
+    transformer_block: nn.Module
+    moe_block: nn.Module
+
     def __init__(
         self,
         *,
         num_layers: int = 16,
         hidden_size: int = 16,
-        # moe_block: nn.Module,
-        # transformer_block: nn.Module = GPT2Block()
         attn_dropout: float = 0.1,
         expert_dropout: float = 0.4,
+        max_position_embeddings: int = 1024,
+        vocab_size: int = 50257,
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -31,23 +37,37 @@ class SparseMoETransformer(nn.Module):
         self.expert_dropout = expert_dropout
         self.final_norm = nn.LayerNorm([hidden_size])
 
-        transformer_block: nn.Module = GPT2Block(hidden_size=hidden_size)
-
         layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
         for i in range(num_layers):
             if i % 2 == 0:
-                layers[f"moe_block{i}"] = ExpertChoiceFFN(layer_id=f"expert_layer_{i}")
+                layers[f"moe_block{i}"] = ExpertChoiceFFN(
+                    layer_id=f"expert_layer_{i}",
+                    hidden_size=hidden_size,
+                    dropout=expert_dropout,
+                )
             else:
-                layers[f"transformer_block{i}"] = transformer_block
+                layers[f"transformer_block{i}"] = GPT2Block(hidden_size=hidden_size)
 
         self.layers = layers
+
+        self.token_embedding = nn.Embedding(vocab_size, hidden_size)
+        self.pos_embedding = nn.Embedding(max_position_embeddings, hidden_size)
 
     def forward(
         self, x: t.Tensor
     ) -> Tuple[t.Tensor, Optional[collections.OrderedDict]]:
         """
-        x: batch seq hidden_size (has already been tokenised)
+        x: batch seq_length hidden_size (has already been tokenised)
         """
+        # Get position of tokens
+        seq_length = x.shape[1]
+        pos = t.arange(0, seq_length).to(x.device)
+
+        # Combine token and positional embeddings
+        x = self.token_embedding(x) + self.pos_embedding(pos)
+        print("x.shape", x.shape)
+
+        # Initialise cache for routing and use for MoE layers
         cache: OrderedDict[str, t.Tensor] = collections.OrderedDict()
         for idx, layer in self.layers.items():
             if idx.startswith("moe"):
@@ -56,22 +76,49 @@ class SparseMoETransformer(nn.Module):
                 x = layer(x)
         z = self.final_norm(x)
 
+        # Unembed to get logits for each token
+        out = einsum(
+            "b s h, v h -> b s v", z, self.token_embedding.weight
+        )  # batch seq vocab_size
+
         print(z)
-        print(cache)
+        # print(cache)
 
-        return z, cache
-
-    def generate(self, input: str) -> str:
-        raise NotImplementedError
-        # Tokenise
-        # Embed
-        # Forward auto-regressively until stop token
+        return out, cache
 
 
-# TODO: Complete generate function
+def sample_next_token(input: str, model: nn.Module) -> str:
+    # Embed
+    # Forward auto-regressively until stop token
+
+    # Tokenise input
+    tokenizer = tiktoken.encoding_for_model("gpt2")
+    tokens_list = tokenizer.encode(input)
+    tokens = t.Tensor(tokens_list).long().unsqueeze(0)  # batch seq
+    print(tokens)
+    print(len(tokens))
+
+    # Forward pass tokens
+    with t.inference_mode():
+        with t.no_grad():
+            all_logits, _cache = model(t.Tensor(tokens))  # batch seq vocab_size
+
+    # Here we're looking at the next token for the first batch
+    logits = all_logits[0, -1, :]  # vocab_size
+
+    # Sample from logits (basic categorical sampling)
+    sampled_token = (
+        t.distributions.categorical.Categorical(logits=logits).sample().item()
+    )
+    assert isinstance(sampled_token, int)
+
+    return tokenizer.decode([sampled_token])
+
+
 # TODO: Add G to weight how much the paths show up on the plot
 # TODO: Add in training/optimisation loop
 # TODO: Add activation/attention caching as well as router caching? - a question of hooks essentially, can add these in later.
+# TODO: Extract variables to config
 
 
 def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
@@ -106,25 +153,13 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
 
 
 def main():
-    x = t.randn(1, 8, 16)  # batch seq hidden_size
-    print(x)
-    print(x.shape)
     model = SparseMoETransformer()
-    with t.inference_mode():
-        with t.no_grad():
-            y, cache = model(x)
-    token_0_path = token_path(cache=cache, token_num=0)
-    return y, cache, token_0_path
+    # x = t.randint(low=0, high=50000, size=(1, 16))
+    # y, _cache = model(x)
+    y = sample_next_token(model=model, input="Hello")
+    # token_0_path = token_path(cache=cache, token_num=0)
+    return y
 
 
 if __name__ == "__main__":
     main()
-    # cache = OrderedDict(
-    #     [
-    #         (str("expert_layer_0"), t.Tensor([[7, 2, 2, 0], [4, 4, 1, 5]])),
-    #         (str("expert_layer_2"), t.Tensor([[7, 5, 1, 4], [2, 1, 0, 7]])),
-    #     ]
-    # )
-    # token_2_path = token_path(cache=cache, token_num=2)
-    # print(token_2_path)
-    # plot_token_path()
