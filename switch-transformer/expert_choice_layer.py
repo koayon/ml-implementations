@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 import torch as t
@@ -18,13 +19,14 @@ class ExpertChoiceFFN(nn.Module):
     def __init__(
         self,
         *,
-        hidden_size: int,
-        num_experts: int,
-        dropout: float,
-        expert: nn.Module,
+        hidden_size: int = 16,
+        num_experts: int = 4,
+        dropout: float = 0.4,
+        expert: Optional[nn.Module] = None,
         topk: int = 0,
-        c: float = 0,
+        c: float = 1.0,
         router: Optional[nn.Module] = None,
+        layer_id: str,
     ) -> None:
         super().__init__()
 
@@ -33,13 +35,21 @@ class ExpertChoiceFFN(nn.Module):
 
         self.hidden_size = hidden_size
         self.num_experts = num_experts
+        self.layer_id = layer_id
 
         self.router = (
             router
             if router is not None
             else nn.Linear(hidden_size, num_experts, device=device)
         )
-        self.experts = nn.ModuleList([expert for _ in range(num_experts)])
+
+        self.expert = (
+            expert
+            if expert is not None
+            else nn.Linear(self.hidden_size, self.hidden_size, device=device)
+        )
+
+        self.experts = nn.ModuleList([self.expert for _ in range(num_experts)])
         self.expert_dropout = nn.Dropout(dropout)
         self.topk = topk
         self.c = c
@@ -55,24 +65,28 @@ class ExpertChoiceFFN(nn.Module):
         Set up to be parallelisable
         expert_num: The expert that we're using for forward
         chosen_token_index: k num_experts
-        G: num_experts k
+        G: k num_experts
         x: bs hidden_size
         """
 
         batch_seq_size = x.shape[0]
 
         # Select top-k expert, with one-hot vector
-        P = nn.functional.one_hot(
+        P: t.Tensor = nn.functional.one_hot(
             chosen_token_index, num_classes=batch_seq_size
         )  # k num_experts (one-hot)
-        print(f"{P.shape=}")
+        # print(f"{P.shape=}")
 
         P = rearrange(P, "k num_experts bs -> bs k num_experts")  # bs k num_experts
         print(f"{P.shape=}")
 
         # Extract relevant sections of P, G
-        P_expert = P[..., expert_num]  # bs k
-        G_expert = G[expert_num, :]  # k
+        P_expert = P[..., expert_num] * 1.0  # bs k
+        G_expert = G[:, expert_num]  # k
+
+        print(f"{P_expert.shape=}")
+        print(f"{x.shape=}")
+        print(f"{G_expert.shape=}")
 
         tokens_for_expert = einsum(
             "bs k, bs hidden_size -> k hidden_size", P_expert, x
@@ -80,14 +94,15 @@ class ExpertChoiceFFN(nn.Module):
 
         # Forward pass through the expert network
         E = self.experts[expert_num](tokens_for_expert)  # k hidden_size
+        print(f"{E.shape=}")
 
-        x_out = t.einsum(
+        x_out = einsum(
             "bs k, k, k hidden_size -> bs hidden_size", P_expert, G_expert, E
         )  # bs hidden_size
 
         return x_out
 
-    def forward(self, x: t.Tensor):
+    def forward(self, x: t.Tensor, cache: Optional[dict[str, t.Tensor]] = None):
         """
         x: batch seq hidden_size
         router: hidden_size num_experts
@@ -107,6 +122,9 @@ class ExpertChoiceFFN(nn.Module):
         # Calculate router score or Gate Value
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=2, dim=0)  # k num_experts each
+
+        if cache is not None:
+            cache[self.layer_id] = chosen_token_index
 
         print(f"{G.shape=}")
         print(f"{chosen_token_index.shape=}")
@@ -129,17 +147,24 @@ class ExpertChoiceFFN(nn.Module):
 
         y = rearrange(y, "(b s) h -> b s h", b=batch_dim)  # batch seq hidden_size
 
-        return y
+        return y, cache
 
 
 def main():
     expert_layer = ExpertChoiceFFN(
-        hidden_size=16, num_experts=4, dropout=0.1, expert=nn.Linear(16, 16), topk=2
+        hidden_size=16,
+        num_experts=4,
+        dropout=0.1,
+        expert=nn.Linear(16, 16),
+        topk=2,
+        layer_id="expert-layer-1",
     )
 
     x = t.rand(size=(3, 4, 16))  # batch seq hidden_size
 
-    print(f"{expert_layer(x)}")
+    # print(f"{expert_layer(x, cache = {})}")
+    y, cache = expert_layer(x, cache={})
+    print(cache)
 
 
 if __name__ == "__main__":
