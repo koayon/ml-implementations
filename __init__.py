@@ -1,3 +1,3 @@
 from general import basic_ffn
 
-from . import helpers
+from . import gpt2, helpers, switch_transformer

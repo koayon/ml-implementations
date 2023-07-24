@@ -123,7 +123,7 @@ class ExpertChoiceFFN(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=2, dim=0)  # k num_experts each
 
-        if cache is not None:
+        if cache is not None and self.layer_id.startswith("expert_layer"):
             cache[self.layer_id] = chosen_token_index
 
         print(f"{G.shape=}")
