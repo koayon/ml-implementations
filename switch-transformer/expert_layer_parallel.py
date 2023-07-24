@@ -14,10 +14,10 @@ class ExpertFFN(nn.Module):
     def __init__(
         self,
         *,
-        hidden_size: int,
-        num_experts: int,
-        dropout: float,
-        expert: nn.Module,
+        hidden_size: int = 16,
+        num_experts: int = 4,
+        dropout: float = 0.4,
+        expert: nn.Module = nn.Linear(16, 16),
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -42,7 +42,7 @@ class ExpertFFN(nn.Module):
         }
         return x_out
 
-    def forward(self, x: t.Tensor):
+    def forward(self, x: t.Tensor, cache=None):
         """
         x: batch seq hidden_size
         router: hidden_size num_experts
@@ -87,7 +87,7 @@ class ExpertFFN(nn.Module):
 
         y = rearrange(y, "(b s) h -> b s h", b=batch_dim)
 
-        return y
+        return y, cache
 
 
 def main():

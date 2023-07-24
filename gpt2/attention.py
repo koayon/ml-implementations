@@ -8,7 +8,6 @@ from torch import nn
 
 
 class UnidirectionalAttention(nn.Module):
-    "Implements the attention mechanism described in"
     qkv_proj: nn.Linear
     output_proj: nn.Linear
     attn_dropout: nn.Dropout
