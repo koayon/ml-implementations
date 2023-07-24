@@ -78,15 +78,15 @@ class ExpertChoiceFFN(nn.Module):
         # print(f"{P.shape=}")
 
         P = rearrange(P, "k num_experts bs -> bs k num_experts")  # bs k num_experts
-        print(f"{P.shape=}")
+        # print(f"{P.shape=}")
 
         # Extract relevant sections of P, G
         P_expert = P[..., expert_num] * 1.0  # bs k
         G_expert = G[:, expert_num]  # k
 
-        print(f"{P_expert.shape=}")
-        print(f"{x.shape=}")
-        print(f"{G_expert.shape=}")
+        # print(f"{P_expert.shape=}")
+        # print(f"{x.shape=}")
+        # print(f"{G_expert.shape=}")
 
         tokens_for_expert = einsum(
             "bs k, bs hidden_size -> k hidden_size", P_expert, x
@@ -94,7 +94,7 @@ class ExpertChoiceFFN(nn.Module):
 
         # Forward pass through the expert network
         E = self.experts[expert_num](tokens_for_expert)  # k hidden_size
-        print(f"{E.shape=}")
+        # print(f"{E.shape=}")
 
         x_out = einsum(
             "bs k, k, k hidden_size -> bs hidden_size", P_expert, G_expert, E

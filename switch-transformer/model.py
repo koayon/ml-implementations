@@ -1,6 +1,8 @@
 import collections
 from typing import Any, Optional, OrderedDict, Tuple, Union
 
+import numpy as np
+import plotly.express as px
 import torch as t
 from einops import rearrange, repeat
 from expert_choice_layer import ExpertChoiceFFN
@@ -12,7 +14,7 @@ class SparseMoETransformer(nn.Module):
     def __init__(
         self,
         *,
-        num_layers: int = 2,
+        num_layers: int = 4,
         hidden_size: int = 16,
         # moe_block: nn.Module,
         # transformer_block: nn.Module = nn.TransformerDecoderLayer(d_model = hidden_size, nhead = 4),
@@ -33,8 +35,8 @@ class SparseMoETransformer(nn.Module):
         for i in range(num_layers):
             if i % 2 == 0:
                 layers[f"moe_block{i}"] = ExpertChoiceFFN(layer_id=f"expert_layer_{i}")
-            else:
-                layers[f"transformer_block{i}"] = transformer_block
+            # else:
+            #     layers[f"transformer_block{i}"] = transformer_block
 
         self.layers = layers
 
@@ -49,26 +51,61 @@ class SparseMoETransformer(nn.Module):
             x, cache = layer(x, cache)
         z = self.final_norm(x)
 
+        print(z)
+        print(cache)
+
         return z, cache
 
     def generate(self, input: str) -> str:
         raise NotImplementedError
 
 
-# TODO: Add in interpretability piece - we want to know which tokens where routed where
+# TODO: Add G to weight how much the paths show up on the plot
 # TODO: Add in training/optimisation loop
 # TODO: Add activation/attention caching as well as router caching? - a question of hooks essentially, can add these in later.
 # TODO: Complete generate function
 
 
+def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
+    """
+    cache: OrderedDict[str, t.Tensor]
+    """
+    out = dict()
+    for layer, token_assignments in cache.items():
+        out[layer] = (token_assignments == token_num).max(dim=0)[0].numpy()
+
+    array = np.array(list(out.values()))
+    num_experts = array.shape[1]
+
+    fig = px.imshow(
+        array,
+        x=[f"expert_{i}" for i in range(num_experts)],
+        y=list(out.keys()),
+        title=f"Token {token_num} path",
+    )
+    fig.show()
+
+    return out
+
+
 def main():
-    x = t.randn(2, 3, 16)
+    x = t.randn(1, 8, 16)  # batch seq hidden_size
     print(x)
     print(x.shape)
     model = SparseMoETransformer()
     y, cache = model(x)
-    return y, cache
+    token_0_path = token_path(cache=cache, token_num=0)
+    return y, cache, token_0_path
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    cache = OrderedDict(
+        [
+            (str("expert_layer_0"), t.Tensor([[7, 2, 2, 0], [4, 4, 1, 5]])),
+            (str("expert_layer_2"), t.Tensor([[7, 5, 1, 4], [2, 1, 0, 7]])),
+        ]
+    )
+    token_2_path = token_path(cache=cache, token_num=2)
+    print(token_2_path)
+    # plot_token_path()
