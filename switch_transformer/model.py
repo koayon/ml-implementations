@@ -9,7 +9,7 @@ from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
 
-from gpt2.transformer_block import GPT2Block
+from gpt.transformer_block import GPT2Block
 from switch_transformer.expert_choice_layer import ExpertChoiceFFN
 
 

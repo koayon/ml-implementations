@@ -5,7 +5,7 @@ from einops import rearrange
 from fancy_einsum import einsum
 from torch import nn
 
-from gpt2.attention import UnidirectionalAttention
+from gpt.attention import UnidirectionalAttention
 
 ACTIVATION_FUNCTIONS = dict(relu=nn.ReLU(), gelu=nn.GELU())
 
