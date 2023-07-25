@@ -1,6 +1,7 @@
 from typing import Any, Optional, Union
 
 import torch as t
+from config import MoEConfig
 from einops import rearrange, repeat
 from expert_choice_layer import ExpertChoiceFFN
 from fancy_einsum import einsum
@@ -9,26 +10,24 @@ from torch import nn
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 
-class MoEBlock:
+class MoEBlock(nn.Module):
     def __init__(
         self,
         *,
-        hidden_size: int,
+        config: MoEConfig,
         expert_layer: Optional[nn.Module] = None,
-        num_attn_heads: int,
-        attn_dropout: float,
-        expert_dropout: float,
-        num_experts: int,
         layer_id: str,
     ):
+        hidden_size = config.hidden_size
+        num_attn_heads = config.num_attn_heads
+        attn_dropout = config.attn_dropout
+
         super().__init__()
         self.expert_layer = (
             expert_layer
             if expert_layer
             else ExpertChoiceFFN(
-                hidden_size=hidden_size,
-                num_experts=num_experts,
-                dropout=expert_dropout,
+                config=config,
                 layer_id=layer_id,
             )
         )

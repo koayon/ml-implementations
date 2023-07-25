@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 import torch as t
+from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
@@ -19,9 +20,7 @@ class ExpertChoiceFFN(nn.Module):
     def __init__(
         self,
         *,
-        hidden_size: int = 16,
-        num_experts: int = 4,
-        dropout: float = 0.4,
+        config: MoEConfig,
         expert: Optional[nn.Module] = None,
         topk: int = 0,
         c: float = 1.0,
@@ -33,14 +32,14 @@ class ExpertChoiceFFN(nn.Module):
         # Either choose k or set it from the capacity factor (c)
         assert (topk > 0) or (c > 0)
 
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
+        self.hidden_size = config.hidden_size
+        self.num_experts = config.num_experts
         self.layer_id = layer_id
 
         self.router = (
             router
             if router is not None
-            else nn.Linear(hidden_size, num_experts, device=device)
+            else nn.Linear(self.hidden_size, self.num_experts, device=device)
         )
 
         self.expert = (
@@ -49,8 +48,8 @@ class ExpertChoiceFFN(nn.Module):
             else nn.Linear(self.hidden_size, self.hidden_size, device=device)
         )
 
-        self.experts = nn.ModuleList([self.expert for _ in range(num_experts)])
-        self.expert_dropout = nn.Dropout(dropout)
+        self.experts = nn.ModuleList([self.expert for _ in range(self.num_experts)])
+        self.expert_dropout = nn.Dropout(config.expert_dropout)
         self.topk = topk
         self.c = c
 
@@ -156,9 +155,7 @@ class ExpertChoiceFFN(nn.Module):
 
 def main():
     expert_layer = ExpertChoiceFFN(
-        hidden_size=16,
-        num_experts=4,
-        dropout=0.1,
+        config=MoEConfig(),
         expert=nn.Linear(16, 16),
         topk=2,
         layer_id="expert-layer-1",

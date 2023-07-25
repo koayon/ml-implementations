@@ -5,6 +5,7 @@ import deepspeed
 import tiktoken
 import torch as t
 import torch.nn as nn
+from config import MoEConfig
 from einops import rearrange, repeat
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
@@ -13,6 +14,8 @@ from tqdm import tqdm
 from switch_transformer.model import SparseMoETransformer
 
 device = "cuda" if t.cuda.is_available() else "cpu"
+
+config = MoEConfig()
 
 
 def get_text_data(
@@ -147,8 +150,9 @@ def train(model: nn.Module) -> nn.Module:
 
 def save_model(model, model_dest):
     """Save the model to the model_dest."""
-    t.save(model.state_dict(), model_dest)
-    print(f"Saved model to {model_dest}")
+    full_dest = f"models/{model_dest}"
+    t.save(model.state_dict(), full_dest)
+    print(f"Saved model to {full_dest}")
 
 
 def count_parameters(model: nn.Module) -> int:
@@ -157,10 +161,7 @@ def count_parameters(model: nn.Module) -> int:
 
 def main():
     # Set up the model
-    model = SparseMoETransformer(
-        hidden_size=512,
-        num_layers=4,
-    )
+    model = SparseMoETransformer(config=config)
     print(f"{count_parameters(model)=}")  # 26M parameter model
 
     model = model.to(device)

@@ -1,31 +1,16 @@
 from typing import Any, Optional, Union
 
 import torch as t
+from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
 
+config = MoEConfig()
+
 ROUTERS = ["linear", "hash", ...]
 
 device = "cuda" if t.cuda.is_available() else "cpu"
-
-
-class HashRouter(nn.Module):
-    def __init__(
-        self,
-        *,
-        hidden_size: int,
-        num_experts: int,
-        device=device,
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
-        self.device = device
-
-    def forward(self):
-        "Should use the built up hash table for the tokens to assign them"
-        raise NotImplementedError
 
 
 class ExpertFFN(nn.Module):
@@ -36,24 +21,22 @@ class ExpertFFN(nn.Module):
     def __init__(
         self,
         *,
-        hidden_size: int,
-        num_experts: int,
-        dropout: float,
+        config: MoEConfig,
         expert: nn.Module,
         topk: int,
         router: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
+        self.hidden_size = config.hidden_size
+        self.num_experts = config.num_experts
 
         self.router = (
             router
             if router is not None
-            else nn.Linear(hidden_size, num_experts, device=device)
+            else nn.Linear(self.hidden_size, self.num_experts, device=device)
         )
-        self.experts = nn.ModuleList([expert for _ in range(num_experts)])
-        self.expert_dropout = nn.Dropout(dropout)
+        self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
+        self.expert_dropout = nn.Dropout(config.expert_dropout)
         self.topk = topk
 
     def forward_individual_expert(
@@ -123,9 +106,7 @@ class ExpertFFN(nn.Module):
 
 
 def main():
-    expert_layer = ExpertFFN(
-        hidden_size=16, num_experts=4, dropout=0.1, expert=nn.Linear(16, 16), topk=2
-    )
+    expert_layer = ExpertFFN(config=config, expert=nn.Linear(16, 16), topk=2)
 
     x = t.rand(size=(3, 4, 16))
 

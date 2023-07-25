@@ -5,12 +5,15 @@ import numpy as np
 import plotly.express as px
 import tiktoken
 import torch as t
+from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
+from moe_block import MoEBlock
 from torch import nn
 
 from gpt.transformer_block import GPT2Block
-from switch_transformer.expert_choice_layer import ExpertChoiceFFN
+
+config = MoEConfig()
 
 
 class SparseMoETransformer(nn.Module):
@@ -23,42 +26,39 @@ class SparseMoETransformer(nn.Module):
     def __init__(
         self,
         *,
-        num_layers: int = 16,
-        hidden_size: int = 16,
-        attn_dropout: float = 0.1,
-        expert_dropout: float = 0.4,
-        max_position_embeddings: int = 1024,
-        vocab_size: int = 50257,
+        config: MoEConfig = config,
     ):
         super().__init__()
-        self.num_layers = num_layers
-        self.hidden_size = hidden_size
-        # self.expert = moe_block
-        self.attn_dropout = attn_dropout
-        self.expert_dropout = expert_dropout
-        self.final_norm = nn.LayerNorm([hidden_size])
+        self.num_layers = config.num_layers
+        self.hidden_size = config.hidden_size
+        self.attn_dropout = config.attn_dropout
+        self.expert_dropout = config.expert_dropout
+        self.final_norm = nn.LayerNorm([self.hidden_size])
 
         layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
-        for i in range(num_layers):
+        for i in range(self.num_layers):
             if i % 2 == 0:
-                layers[f"moe_block{i}"] = ExpertChoiceFFN(
-                    layer_id=f"expert_layer_{i}",
-                    hidden_size=hidden_size,
-                    dropout=expert_dropout,
+                layers[f"moe_block{i}"] = MoEBlock(
+                    config=config,
+                    layer_id=f"moe_layer_{i}",
                 )
             else:
-                layers[f"transformer_block{i}"] = GPT2Block(hidden_size=hidden_size)
+                layers[f"transformer_block{i}"] = GPT2Block(
+                    hidden_size=config.hidden_size
+                )
 
         self.layers = layers
 
-        self.token_embedding = nn.Embedding(vocab_size, hidden_size)
-        self.pos_embedding = nn.Embedding(max_position_embeddings, hidden_size)
+        self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.pos_embedding = nn.Embedding(
+            config.max_position_embeddings, config.hidden_size
+        )
 
     def forward(
         self, x: t.Tensor
     ) -> Tuple[t.Tensor, Optional[collections.OrderedDict]]:
         """
-        x: batch seq_length hidden_size (has already been tokenised)
+        x: batch seq_length
         """
         # Get position of tokens
         seq_length = x.shape[1]
@@ -93,7 +93,7 @@ def sample_next_token(input: str, model: nn.Module) -> str:
     # Forward auto-regressively until stop token
 
     # Tokenise input
-    tokenizer = tiktoken.encoding_for_model("gpt2")
+    tokenizer = tiktoken.encoding_for_model(config.tokeniser_string)
     tokens_list = tokenizer.encode(input)
     tokens = t.Tensor(tokens_list).long().unsqueeze(0)  # batch seq
     print(tokens)
@@ -128,7 +128,7 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     cache: OrderedDict[str, t.Tensor]
     """
 
-    filtered_cache = {k: v for k, v in cache.items() if k.startswith("expert_layer_")}
+    filtered_cache = {k: v for k, v in cache.items() if k.startswith("moe_layer_")}
 
     out = dict()
 
@@ -156,10 +156,10 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
 
 def main():
     model = SparseMoETransformer()
-    x = t.randint(low=0, high=50000, size=(1, 16))
+    x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
     y, _cache = model(x)
-    # y = sample_next_token(model=model, input="Hello")
     # token_0_path = token_path(cache=cache, token_num=0)
+    # output_str = sample_next_token(model=model, input="Hello")
     print("cache")
     print(_cache)
     return y, _cache
