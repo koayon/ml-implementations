@@ -22,29 +22,30 @@ def get_shakespeare_data() -> Tuple[t.Tensor, t.Tensor]:
     with open(data_source, "r") as f:
         text = f.read()
     tokeniser = tiktoken.encoding_for_model("gpt2")
-    tokenised_text = tokeniser.encode(text)
+    tokenised_text = tokeniser.encode(text)  # list of ints
     train_split = int(len(tokenised_text) * 0.9)
-    full_data = t.tensor(tokenised_text, dtype=t.long, device=device).unsqueeze(0)
+    full_data = t.tensor(tokenised_text, dtype=t.long, device=device)  # len_of_text
 
-    train_data = full_data[:, :train_split]
-    test_data = full_data[:, train_split:]
+    train_data = full_data[:train_split]
+    test_data = full_data[train_split:]
     # print(f"{train_data.shape=}")
     # print(f"{test_data.shape=}")
-    return train_data, test_data
+    return train_data, test_data  # vectors of ints
 
 
 class ShakespeareDataset(Dataset):
     """Train Dataset for Shakespeare data."""
 
     def __init__(self, data: t.Tensor, block_size: int):
+        data.to(device)
         self.data = data
         self.block_size = block_size
 
     def __len__(self):
-        return self.data.shape[1] // self.block_size
+        return self.data.shape[0] // self.block_size
 
     def __getitem__(self, idx):
-        return self.data[:, idx * self.block_size : (idx + 1) * self.block_size]
+        return self.data[idx * self.block_size : (idx + 1) * self.block_size]
 
 
 def evaluate(model: nn.Module, test_dataloader: DataLoader) -> float:
@@ -52,20 +53,23 @@ def evaluate(model: nn.Module, test_dataloader: DataLoader) -> float:
     # print(f"{len(test_dataloader)}")
     with t.inference_mode():
         total_loss = 0
-        for batch, batch_data in enumerate(test_dataloader):
-            batch_data = batch_data.squeeze(0)
-
-            target_tokens = batch_data[1:]  # seq_len - 1
-            targets = F.one_hot(target_tokens, 50257).float()  # seq_len - 1, vocab_size
-
+        for _batch_num, batch_data in enumerate(test_dataloader):
+            # batch_data  # batch, seq_len
             # print(f"{batch_data.shape=}")
 
-            logits, _cache = model(batch_data)
-            logits = logits[:-1]  # seq_len - 1, vocab_size
-            probs = t.softmax(logits, dim=-1)  # seq_len - 1, vocab_size
+            target_tokens = batch_data[:, 1:]  # batch, seq_len - 1
 
-            loss = F.cross_entropy(probs, targets)
+            logits, _cache = model(batch_data)
+            logits = logits[:, :-1, :]  # batch, seq_len - 1, vocab_size
+
+            flattened_logits = rearrange(logits, "b s v -> (b s) v")
+            flattened_targets = rearrange(target_tokens, "b s -> (b s)")
+
+            probs = t.softmax(logits, dim=-1)  # batch, seq_len - 1, vocab_size
+
+            loss = F.cross_entropy(flattened_logits, flattened_targets)
             total_loss += loss.item()
+
         return total_loss / len(test_dataloader)
 
 
@@ -80,14 +84,14 @@ def train(model: nn.Module) -> nn.Module:
     train_dataloader = DataLoader(
         train_dataset,
         sampler=RandomSampler(train_dataset, replacement=True),
-        batch_size=1,
+        batch_size=8,
         shuffle=False,
         num_workers=6,
     )
     test_dataloader = DataLoader(
         test_dataset,
         sampler=RandomSampler(test_dataset, replacement=True),
-        batch_size=1,
+        batch_size=8,
         shuffle=False,
         num_workers=6,
     )
@@ -100,25 +104,32 @@ def train(model: nn.Module) -> nn.Module:
     # Train the model
     for epoch in range(1, 2):
         model.train()
-        for batch_num, batch_data in tqdm(enumerate(train_dataloader)):
-            batch_data = batch_data.squeeze(0)
-            batch_data.to(device)  # seq_len
+        for batch_num, batch_data in enumerate(train_dataloader):
+            # batch_data  # batch seq_len
+
+            # print(f"{batch_data.shape=}")
 
             optimiser.zero_grad()
 
-            target_tokens = batch_data[1:]  # seq_len - 1
-            targets = F.one_hot(target_tokens, 50257).float()  # seq_len - 1, vocab_size
+            target_tokens = batch_data[:, 1:]  # batch seq_len - 1
             logits, _cache = model(batch_data)
-            logits = logits[:-1]  # seq_len - 1, vocab_size
+            logits = logits[:, :-1, :]  # batch seq_len - 1, vocab_size
             # print(f"{logits=}")
             # print(logits.shape)
-            probs = t.softmax(logits, dim=-1)  # seq_len - 1, vocab_size
 
-            loss = F.cross_entropy(probs, targets)
+            flattened_logits = rearrange(logits, "b s v -> (b s) v")  # bs, vocab_size
+            flattened_targets = rearrange(target_tokens, "b s -> (b s)")  # bs
+
+            # print(f"{probs.shape=}")
+            # print(f"{targets.shape=}")
+
+            loss = F.cross_entropy(flattened_logits, flattened_targets)
+            # print(loss)
             loss.backward()
             optimiser.step()
 
-            if batch_num % 5 == 0:
+            # if batch_num % 5 == 0:
+            if True:
                 test_loss = evaluate(model, test_dataloader)
                 print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {test_loss}")
                 # print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {loss}")
@@ -138,16 +149,18 @@ def main():
     trained_model = train(model)
 
     # Save the model
-    model_dest = "moe.pt"
-    t.save(trained_model.state_dict(), model_dest)
+    save_model(trained_model, "moe.pt")
+
+
+def save_model(model, model_dest):
+    """Save the model to the model_dest."""
+    t.save(model.state_dict(), model_dest)
     print(f"Saved model to {model_dest}")
 
 
 if __name__ == "__main__":
     main()
 
-# Test loss is coming up as NaN. Why?
 # TODO: Put all variables into a config.py file to import. Want to decrease hidden size etc. to make it run faster.
 # TODO: Add deepspeed
 # TODO: Make into class
-# Increase batch_size and other stuff and see if we can actually get it to train.
