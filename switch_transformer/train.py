@@ -49,7 +49,7 @@ class ShakespeareDataset(Dataset):
         self.block_size = block_size
 
     def __len__(self):
-        return self.data.shape[0] // self.block_size
+        return self.data.shape[0] - self.block_size
 
     def __getitem__(self, idx):
         return self.data[idx * self.block_size : (idx + 1) * self.block_size]
@@ -114,7 +114,7 @@ def train(model: nn.Module) -> nn.Module:
     # Train the model
     for epoch in range(1, 2):
         model.train()
-        for batch_num, batch_data in enumerate(train_dataloader):
+        for sample_batch_num, batch_data in enumerate(train_dataloader):
             # batch_data  # batch seq_len
 
             # print(f"{batch_data.shape=}")
@@ -142,7 +142,9 @@ def train(model: nn.Module) -> nn.Module:
             # if batch_num % 5 == 0:
             if True:
                 test_loss = evaluate(model, test_dataloader)
-                print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {test_loss}")
+                print(
+                    f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
+                )
                 # print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {loss}")
 
     return model
@@ -175,7 +177,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# TODO: Put all variables into a config.py file to import. Want to decrease hidden size etc. to make it run faster.
-# TODO: Add deepspeed
-# TODO: Make into class

@@ -6,6 +6,7 @@ from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
+from torch.nn import functional as F
 
 ROUTERS = ["linear", "hash", ...]
 
@@ -41,6 +42,8 @@ class ExpertChoiceFFN(nn.Module):
             if router is not None
             else nn.Linear(self.hidden_size, self.num_experts, device=device)
         )
+
+        self.routing_dropout = nn.Dropout(config.routing_dropout)
 
         self.expert = (
             expert
@@ -92,7 +95,9 @@ class ExpertChoiceFFN(nn.Module):
         )  # k hidden_size
 
         # Forward pass through the expert network
-        E = self.experts[expert_num](tokens_for_expert)  # k hidden_size
+        E = self.expert_dropout(
+            self.experts[expert_num](tokens_for_expert)
+        )  # k hidden_size
         # print(f"{E.shape=}")
 
         x_out = einsum(
@@ -118,7 +123,7 @@ class ExpertChoiceFFN(nn.Module):
         self.k = min(int(self.k), batch_dim * seq_length)
 
         x = rearrange(x, "b s h -> (b s) h")
-        h = self.router(x)  # bs num_experts
+        h = self.routing_dropout(self.router(x))  # bs num_experts
 
         # print(h.shape)
 

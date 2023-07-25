@@ -116,13 +116,6 @@ def sample_next_token(input: str, model: nn.Module) -> str:
     return tokenizer.decode([sampled_token])
 
 
-# TODO: Add G to weight how much the paths show up on the plot
-# TODO: Add in training/optimisation loop
-# TODO: Add activation/attention caching as well as router caching? - a question of hooks essentially, can add these in later.
-# TODO: Extract variables to config
-#
-
-
 def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     """
     cache: OrderedDict[str, t.Tensor]
