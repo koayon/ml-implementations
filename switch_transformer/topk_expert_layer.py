@@ -71,14 +71,14 @@ class ExpertFFN(nn.Module):
         P = nn.functional.one_hot(
             chosen_expert_index,
         )  # bs k num_experts (one-hot)
-        print(f"{P.shape=}")
+        # print(f"{P.shape=}")
 
         P_expert = P[..., expert_num]  # bs k
 
         tokens_for_expert = einsum("bs k, bs hidden_size -> k hidden_size", P_expert, x)
 
         E = self.experts[expert_num](tokens_for_expert)  # k hidden_size
-        print(E.shape)
+        # print(E.shape)
 
         x_out = einsum("bs k, k hidden_size -> bs hidden_size", G, E)  # bs hidden_size
 
@@ -100,8 +100,8 @@ class ExpertFFN(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_expert_index = t.topk(S, k=2, dim=-1)  # bs k each
 
-        print(f"{G.shape=}")
-        print(f"{chosen_expert_index.shape=}")
+        # print(f"{G.shape=}")
+        # print(f"{chosen_expert_index.shape=}")
 
         # Collect expert results from parallelised expert forward
         expert_results = [

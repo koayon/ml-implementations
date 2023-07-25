@@ -5,12 +5,12 @@ import deepspeed
 import tiktoken
 import torch as t
 import torch.nn as nn
-import tqdm
 from einops import rearrange, repeat
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from tqdm import tqdm
 
-from switch_transformer.expert_choice_layer import ExpertChoiceFFN
+from switch_transformer.model import SparseMoETransformer
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
@@ -28,6 +28,8 @@ def get_shakespeare_data() -> Tuple[t.Tensor, t.Tensor]:
 
     train_data = full_data[:, :train_split]
     test_data = full_data[:, train_split:]
+    # print(f"{train_data.shape=}")
+    # print(f"{test_data.shape=}")
     return train_data, test_data
 
 
@@ -47,12 +49,22 @@ class ShakespeareDataset(Dataset):
 
 def evaluate(model: nn.Module, test_dataloader: DataLoader) -> float:
     """Evaluate the model on the test set."""
-
+    # print(f"{len(test_dataloader)}")
     with t.inference_mode():
         total_loss = 0
         for batch, batch_data in enumerate(test_dataloader):
-            output = model(batch_data)
-            loss = F.nll_loss(output.view(-1, model.vocab_size), batch_data.view(-1))
+            batch_data = batch_data.squeeze(0)
+
+            target_tokens = batch_data[1:]  # seq_len - 1
+            targets = F.one_hot(target_tokens, 50257).float()  # seq_len - 1, vocab_size
+
+            # print(f"{batch_data.shape=}")
+
+            logits, _cache = model(batch_data)
+            logits = logits[:-1]  # seq_len - 1, vocab_size
+            probs = t.softmax(logits, dim=-1)  # seq_len - 1, vocab_size
+
+            loss = F.cross_entropy(probs, targets)
             total_loss += loss.item()
         return total_loss / len(test_dataloader)
 
@@ -70,14 +82,14 @@ def train(model: nn.Module) -> nn.Module:
         sampler=RandomSampler(train_dataset, replacement=True),
         batch_size=1,
         shuffle=False,
-        num_workers=1,
+        num_workers=6,
     )
     test_dataloader = DataLoader(
         test_dataset,
-        sampler=RandomSampler(train_dataset, replacement=True),
+        sampler=RandomSampler(test_dataset, replacement=True),
         batch_size=1,
         shuffle=False,
-        num_workers=1,
+        num_workers=6,
     )
 
     # Set up the optimiser
@@ -88,29 +100,54 @@ def train(model: nn.Module) -> nn.Module:
     # Train the model
     for epoch in range(1, 2):
         model.train()
-        for batch_num, batch_data in enumerate(train_dataloader):
+        for batch_num, batch_data in tqdm(enumerate(train_dataloader)):
             batch_data = batch_data.squeeze(0)
             batch_data.to(device)  # seq_len
 
             optimiser.zero_grad()
 
             target_tokens = batch_data[1:]  # seq_len - 1
-            targets = F.one_hot(
-                target_tokens, model.vocab_size
-            ).float()  # seq_len - 1, vocab_size
-            logits = model(batch_data)[:-1]  # seq_len - 1, vocab_size
-            probs = F.softmax(logits, dim=-1)  # seq_len - 1, vocab_size
+            targets = F.one_hot(target_tokens, 50257).float()  # seq_len - 1, vocab_size
+            logits, _cache = model(batch_data)
+            logits = logits[:-1]  # seq_len - 1, vocab_size
+            # print(f"{logits=}")
+            # print(logits.shape)
+            probs = t.softmax(logits, dim=-1)  # seq_len - 1, vocab_size
 
-            # loss = F.nll_loss(output.view(-1, model.vocab_size), batch_data.view(-1))
             loss = F.cross_entropy(probs, targets)
             loss.backward()
             optimiser.step()
 
-            test_loss = evaluate(model, test_dataloader)
-            if batch_num % 100 == 0:
+            if batch_num % 5 == 0:
+                test_loss = evaluate(model, test_dataloader)
                 print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {test_loss}")
+                # print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {loss}")
 
     return model
 
 
+def main():
+    # Set up the model
+    model = SparseMoETransformer(
+        hidden_size=512,
+        num_layers=4,
+    )
+    model = model.to(device)
+
+    # Train the model
+    trained_model = train(model)
+
+    # Save the model
+    model_dest = "moe.pt"
+    t.save(trained_model.state_dict(), model_dest)
+    print(f"Saved model to {model_dest}")
+
+
+if __name__ == "__main__":
+    main()
+
+# Test loss is coming up as NaN. Why?
+# TODO: Put all variables into a config.py file to import. Want to decrease hidden size etc. to make it run faster.
 # TODO: Add deepspeed
+# TODO: Make into class
+# Increase batch_size and other stuff and see if we can actually get it to train.

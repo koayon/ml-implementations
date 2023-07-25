@@ -121,7 +121,7 @@ class ExpertChoiceFFN(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         h = self.router(x)  # bs num_experts
 
-        print(h.shape)
+        # print(h.shape)
 
         # Calculate router score or Gate Value
         S = t.softmax(h, dim=-1)  # bs num_experts
@@ -130,10 +130,10 @@ class ExpertChoiceFFN(nn.Module):
         if cache is not None and self.layer_id.startswith("expert_layer"):
             cache[self.layer_id] = chosen_token_index
 
-        print(f"{G.shape=}")
-        print(f"{chosen_token_index.shape=}")
+        # print(f"{G.shape=}")
+        # print(f"{chosen_token_index.shape=}")
 
-        print(chosen_token_index)
+        # print(chosen_token_index)
 
         # Collect expert results from parallelised expert forward
         expert_results = [

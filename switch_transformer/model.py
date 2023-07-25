@@ -18,6 +18,7 @@ class SparseMoETransformer(nn.Module):
     pos_embedding: nn.Embedding
     transformer_block: nn.Module
     moe_block: nn.Module
+    vocab_size: int
 
     def __init__(
         self,
@@ -65,7 +66,7 @@ class SparseMoETransformer(nn.Module):
 
         # Combine token and positional embeddings
         x = self.token_embedding(x) + self.pos_embedding(pos)
-        print("x.shape", x.shape)
+        # print("x.shape", x.shape)
 
         # Initialise cache for routing and use for MoE layers
         cache: OrderedDict[str, t.Tensor] = collections.OrderedDict()
@@ -81,7 +82,7 @@ class SparseMoETransformer(nn.Module):
             "b s h, v h -> b s v", z, self.token_embedding.weight
         )  # batch seq vocab_size
 
-        print(z)
+        # print(z)
         # print(cache)
 
         return out, cache
@@ -155,11 +156,13 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
 
 def main():
     model = SparseMoETransformer()
-    # x = t.randint(low=0, high=50000, size=(1, 16))
-    # y, _cache = model(x)
-    y = sample_next_token(model=model, input="Hello")
+    x = t.randint(low=0, high=50000, size=(1, 16))
+    y, _cache = model(x)
+    # y = sample_next_token(model=model, input="Hello")
     # token_0_path = token_path(cache=cache, token_num=0)
-    return y
+    print("cache")
+    print(_cache)
+    return y, _cache
 
 
 if __name__ == "__main__":
