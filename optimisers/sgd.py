@@ -9,7 +9,7 @@ class SGD:
         params: Iterable[t.nn.parameter.Parameter],
         lr: float,
         momentum: float,
-        weight_decay: float,
+        weight_decay: float = 0.0,
     ):
         """SGD with momentum and weight decay.
         SGD happens over the mini-batch rather than at every instance individually to get more signal.
@@ -38,12 +38,16 @@ class SGD:
                 # where l2_norm(w) = sum(w**2)
 
                 # Putting this inside the gradient, we differentiate and (up to constant 1/2 factor) get
+                assert p.grad is not None
 
                 g = p.grad + self.weight_decay * p  # note that p is all_weights here
 
                 # If using momentum
                 if self.mu:
                     if i > 1:
+                        assert self.b[i - 1] is not None
+
+                        # b is the accumulated gradients
                         self.b[i] = self.mu * self.b[i - 1] + g  # type: ignore
                     else:
                         self.b[i] = g
