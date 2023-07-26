@@ -1,9 +1,10 @@
 from typing import Iterable, Optional
 
 import torch as t
+from torch.optim.optimizer import Optimizer
 
 
-class Adam:
+class Adam(Optimizer):
     def __init__(
         self,
         params: Iterable[t.nn.parameter.Parameter],

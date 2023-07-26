@@ -1,9 +1,10 @@
 from typing import Iterable, Optional
 
 import torch as t
+from torch.optim.optimizer import Optimizer
 
 
-class SGD:
+class SGD(Optimizer):
     def __init__(
         self,
         params: Iterable[t.nn.parameter.Parameter],
