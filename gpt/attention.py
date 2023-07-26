@@ -90,7 +90,7 @@ class UnidirectionalAttention(nn.Module):
             v,
         )  # batch, num_heads, seq, hidden_size
         combined_with_v = rearrange(
-            combined_with_v, "batch head seq hidden_dim -> batch seq (head dim)"
+            combined_with_v, "batch head seq hidden_dim -> batch seq (head hidden_dim)"
         )  # batch, seq, hidden_size*num_heads
 
         out = self.output_proj(combined_with_v)  # batch, seq, hidden_size

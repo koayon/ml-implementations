@@ -1,11 +1,16 @@
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import tiktoken
 import torch as t
+import transformers
 from torch import nn
 from transformer_block import GPT2Block
+from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
+
+tokenizer = tiktoken.encoding_for_model("gpt2")
 
 
 @dataclass(frozen=True)
@@ -88,3 +93,39 @@ class GPT2(nn.Module):
         )  # batch, seq, vocab_size
 
         return logits
+
+    def load_pretrained_weights(self):
+        """Load weights from OpenAI's pretrained model from HuggingFace."""
+
+        hf_gpt = helpers.load_pretrained_gpt()
+        for param in self.parameters():
+            param.requires_grad = False
+
+        # Embeddings (note the copy_ ensures that weights are copied in_place)
+        self.token_embedding.weight.copy_(hf_gpt.transformer.wte.weight)
+        self.pos_embedding.weight.copy_(hf_gpt.transformer.wpe.weight)
+        self._copy_weight_bias(self.final_layer_norm, hf_gpt.ln_f)
+
+        for my_block, hf_block in zip(self.blocks, hf_gpt.transformer.h):
+            assert isinstance(hf_block, HFGPT2Block)
+
+            self._copy_weight_bias(my_block.ln1, hf_block.ln_1)
+            self._copy_weight_bias(
+                my_block.attn.qkv_proj, hf_block.attn.c_attn, transpose=True
+            )
+            self._copy_weight_bias(
+                my_block.attn.output_proj, hf_block.attn.c_proj, transpose=True
+            )
+            self._copy_weight_bias(my_block.ln2, hf_block.ln_2)
+            self._copy_weight_bias(my_block.linear1, hf_block.mlp.c_fc, transpose=True)
+            self._copy_weight_bias(
+                my_block.linear2, hf_block.mlp.c_proj, transpose=True
+            )
+
+        for p in self.parameters():
+            p.requires_grad = True
+
+    def _copy_weight_bias(self, mine, theirs, transpose=False):
+        mine.weight.copy_(theirs.weight.T if transpose else theirs.weight)
+        if mine.bias is not None:
+            mine.bias.copy_(theirs.bias)
