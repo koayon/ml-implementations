@@ -108,3 +108,29 @@ class LayerNorm(nn.Module):
         x_norm += self.bias
 
         return x_norm
+
+
+class RMSNorm(nn.Module):
+    """RMS Layer Norm Implementation
+    Reference: https://arxiv.org/pdf/1910.07467.pdf
+    """
+
+    def __init__(self, shape_without_batch: tuple, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(t.ones(shape_without_batch))  # channels, *other_dims
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        """
+        x: (batch channels *other_dims)
+        Return: shape(batch channels *other_dims)
+        """
+        # Only keep the batch dimension
+        dims_to_reduce = tuple(range(1, x.ndim))
+
+        rms = t.sqrt(t.mean(x**2, dim=dims_to_reduce, keepdim=True))
+
+        # Normalise
+        x_norm = (x / (rms + self.eps)) * self.weight
+
+        return x_norm
