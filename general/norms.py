@@ -134,3 +134,47 @@ class RMSNorm(nn.Module):
         x_norm = (x / (rms + self.eps)) * self.weight
 
         return x_norm
+
+
+class GroupRMSNorm(nn.Module):
+    """Group Normalisation.
+    Layer Norm but instead of normalising over all channels, normalise over groups of channels separately.
+    We're actually doing Group RMSNorm here.
+
+    group_size = num_channels gives RMS Layer Norm
+    group_size = 1 gives RMS Instance Norm
+
+    Reference: https://arxiv.org/abs/1803.08494"""
+
+    def __init__(self, shape_without_batch: tuple, num_groups: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(t.ones(shape_without_batch))  # channels, *other_dims
+        self.channels = shape_without_batch[0]
+        self.group_size = self.channels // num_groups
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        """
+        x: (batch channels *other_dims)
+        Return: shape(batch channels *other_dims)
+        """
+        assert x.shape[1] == self.channels
+
+        x_groups = t.split(
+            x, self.group_size, dim=1
+        )  # list[batch group_size *other_dims]
+
+        # Only keep the batch dimension
+        dims_to_reduce = tuple(range(1, x.ndim))
+
+        group_norms = []
+        for group in x_groups:
+            # Calculate the RMS Norm for each group
+            rms = t.sqrt(t.mean(group**2, dim=dims_to_reduce, keepdim=True))
+            group_norm = (group / (rms + self.eps)) * self.weight
+            group_norms.append(group_norm)
+
+        # Concatenate the groups back together
+        x_norm = t.cat(group_norms, dim=1)
+
+        return x_norm
