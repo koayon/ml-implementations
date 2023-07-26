@@ -80,3 +80,31 @@ class BatchNorm2d(nn.Module):
 
     def extra_repr(self) -> str:
         return f"BatchNorm2d - eps: {self.eps}, momentum: {self.momentum}, num_features: {self.num_features}"
+
+
+class LayerNorm(nn.Module):
+    """LayerNorm implementation as given in https://arxiv.org/pdf/1607.06450.pdf."""
+
+    def __init__(self, shape_without_batch: tuple, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(t.ones(shape_without_batch))  # channels
+        self.bias = nn.Parameter(t.zeros(shape_without_batch))  # channels
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        """
+        x: (batch channels *other_dims)
+        Return: shape(batch channels *other_dims)
+        """
+        # Only keep the batch dimension
+        dims_to_reduce = tuple(range(1, x.ndim))
+
+        mean = t.mean(x, dim=dims_to_reduce, keepdim=True)
+        var = t.var(x, dim=dims_to_reduce, keepdim=True, unbiased=False)
+
+        # Normalise
+        x_norm = (x - mean) / (t.sqrt(var) + self.eps)
+        x_norm *= self.weight
+        x_norm += self.bias
+
+        return x_norm
