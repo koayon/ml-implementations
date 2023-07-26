@@ -11,14 +11,9 @@ class BatchNorm2d(nn.Module):
     "running_mean: shape (num_features,)"
     running_var: t.Tensor
     "running_var: shape (num_features,)"
-    num_batches_tracked: t.Tensor
-    "num_batches_tracked: shape ()"
 
     def __init__(self, num_features: int, eps=1e-05, momentum=0.1):
-        """Like nn.BatchNorm2d with track_running_stats=True and affine=True.
-
-        Name the learnable affine parameters `weight` and `bias` in that order.
-        """
+        """Like nn.BatchNorm2d with affine=True."""
 
         super().__init__()
 
@@ -26,8 +21,9 @@ class BatchNorm2d(nn.Module):
         self.num_features = num_features
         self.momentum = momentum
 
-        self.weight = nn.Parameter(t.ones(num_features))
-        self.bias = nn.Parameter(t.zeros(num_features))
+        # By default the affine transform is the identity (might learn something else tweaked slightly)
+        self.weight = nn.Parameter(t.ones(num_features))  # channels
+        self.bias = nn.Parameter(t.zeros(num_features))  # channels
 
         # Buffers are variables that are part of the model but not trainable parameters.
         # They aren't learned.
@@ -38,51 +34,49 @@ class BatchNorm2d(nn.Module):
         self.register_buffer("num_batches_tracked", t.tensor(0))  # scalar
 
     def forward(self, x: t.Tensor) -> t.Tensor:
-        """Normalize each channel.
-
-        Compute the variance using `torch.var(x, unbiased=False)`
+        """Normalises each channel along the batch.
+        To be used at the minibatch level.
+        Downside is that it requires large-ish mini-batches to be useful but large batches may require too much memory.
+        Generally prefer LayerNorm or RMSNorm
 
         x: shape (batch, channels, height, width)
         Return: shape (batch, channels, height, width)
         """
-        batch, _channels, height, width = x.shape
+        _batch, channels, _height, _width = x.shape
+        assert channels == self.num_features
 
+        # If training we're going to get the mean, var from our current batch
         if self.training:
-            mean = t.mean(x, dim=(0, 2, 3))  # aveage over batch and spatial dimensions
+            mean = t.mean(
+                x, dim=(0, 2, 3)
+            )  # average over batch and spatial dimensions shape(channels)
             var = t.var(
                 x, dim=(0, 2, 3), unbiased=False
-            )  # variance of batch and spatial dimensions
+            )  # variance of batch and spatial dimensions shape(channels)
+
+            # Update running mean and var
+            self.running_mean = (
+                1 - self.momentum
+            ) * self.running_mean + self.momentum * mean
+            self.running_var = (
+                1 - self.momentum
+            ) * self.running_var + self.momentum * var
+
+        # For inference grab the running_mean/var from the training data and use this instead
         else:
             mean = self.running_mean
             var = self.running_var
 
-        num = x - repeat(
-            mean, "channels -> batch channels height width", b=batch, h=height, w=width
-        )
-        denom = t.sqrt(
-            repeat(
-                var,
-                "channels -> batch channels height width",
-                b=batch,
-                h=height,
-                w=width,
-            )
-            + self.eps
-        )
+        # Rearrange shape(channels) tensors to broadcasts well
+        # Takes (channels) -> (1, channels, 1, 1)
+        broadcast = lambda v: v.reshape(1, self.num_features, 1, 1)
 
-        weight = repeat(self.weight, "c-> b c h w", b=batch, h=height, w=width)
-        bias = repeat(self.bias, "c-> b c h w", b=batch, h=height, w=width)
+        # Normalise then learned affine transform
+        x_norm = (x - broadcast(mean)) / (broadcast(t.sqrt(var)) + self.eps)
+        x_norm *= broadcast(self.weight)
+        x_norm += broadcast(self.bias)
 
-        y = num / denom * weight + bias
-
-        self.running_mean = (
-            1 - self.momentum
-        ) * self.running_mean + self.momentum * mean
-        self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
-
-        self.num_batches_tracked += 1
-
-        return y
+        return x_norm
 
     def extra_repr(self) -> str:
-        return f"BatchNorm2d - eps: {self.eps}, momentum: {self.momentum}, num_features: {self.weight.shape}"
+        return f"BatchNorm2d - eps: {self.eps}, momentum: {self.momentum}, num_features: {self.num_features}"

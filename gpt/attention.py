@@ -42,6 +42,7 @@ class UnidirectionalAttention(nn.Module):
         )  # W_O
 
         self.attn_scale = 1.0 / math.sqrt(self.head_size)
+
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
@@ -51,7 +52,7 @@ class UnidirectionalAttention(nn.Module):
 
         Return: shape (batch, seq, hidden_size)
         """
-        _, seq_length, hidden_size = x.shape
+        _batch, _seq_length, hidden_size = x.shape
         assert hidden_size == self.hidden_size
 
         # Apply W_qkv to x to get q, k, v
@@ -72,9 +73,9 @@ class UnidirectionalAttention(nn.Module):
         q_k = t.einsum("bnih,bnjh->bnij", q, k)  # batch, num_heads, seq, seq
         q_k *= self.attn_scale
 
-        mask = t.triu(t.ones_like(q_k)).to(x.device)  # seq, seq
+        mask = t.tril(t.ones_like(q_k)).to(x.device)  # seq, seq
 
-        # Use lower triangular mask for q_k matrix
+        # Use lower triangular mask for q_k matrix. Where mask is 0 (i.e. upper triangle), we set the attention score to -inf (which will be 0 post softmax)
         masked_attention_scores = q_k.masked_fill(
             mask == 0, float("-inf")
         )  # batch, num_heads, seq, seq
