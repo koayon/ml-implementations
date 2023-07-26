@@ -24,22 +24,37 @@ class GPT2Block(nn.Module):
 
     def __init__(
         self,
-        hidden_size: int = 64,
-        num_heads: int = 4,
+        hidden_size: int = 512,
+        num_heads: int = 12,
         dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
         activation_function: str = "gelu",
     ):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
+
+        # Attention part
         self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
         self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
         self.ln2 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+
+        self.attention = nn.Sequential(
+            self.ln1,
+            self.attn,
+            self.ln2,
+        )
+
+        # MLP part
         self.linear1 = nn.Linear(hidden_size, hidden_size * 4)
-        self.nonlinearity = ACTIVATION_FUNCTIONS[activation_function]
+        self.activation_function = ACTIVATION_FUNCTIONS[activation_function]
         self.linear2 = nn.Linear(hidden_size * 4, hidden_size)
         self.dropout = nn.Dropout(dropout)
+
+        self.MLP = nn.Sequential(
+            self.linear1,
+            self.activation_function,
+            self.linear2,
+            nn.Dropout(dropout),
+        )
 
     def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
         """
@@ -47,6 +62,9 @@ class GPT2Block(nn.Module):
 
         Return: shape (batch, seq, hidden_size)
         """
-        x = x + self.attn(self.ln1(x), cache=cache)
-        x = x + self.dropout(self.linear2(self.nonlinearity(self.linear1(self.ln2(x)))))
+
+        x = x + self.attention(x)
+
+        x = self.MLP(x)
+
         return x
