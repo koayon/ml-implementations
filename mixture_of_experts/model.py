@@ -1,17 +1,17 @@
 import collections
-from typing import Any, Optional, OrderedDict, Tuple, Union
+from typing import Any, Optional, OrderedDict, Tuple
 
 import numpy as np
 import plotly.express as px
 import tiktoken
 import torch as t
-from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
-from moe_block import MoEBlock
 from torch import nn
 
 from gpt.transformer_block import GPT2Block
+from mixture_of_experts.config import MoEConfig
+from mixture_of_experts.moe_block import MoEBlock
 
 config = MoEConfig()
 
@@ -30,29 +30,28 @@ class SparseMoETransformer(nn.Module):
     ):
         super().__init__()
         self.num_layers = config.num_layers
-        self.hidden_size = config.hidden_size
         self.attn_dropout = config.attn_dropout
         self.expert_dropout = config.expert_dropout
-        self.final_norm = nn.LayerNorm([self.hidden_size])
 
-        layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
+        self.layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
         for i in range(self.num_layers):
             if i % 2 == 0:
-                layers[f"moe_block{i}"] = MoEBlock(
+                self.layers[f"moe_block{i}"] = MoEBlock(
                     config=config,
                     layer_id=f"moe_layer_{i}",
                 )
             else:
-                layers[f"transformer_block{i}"] = GPT2Block(
-                    hidden_size=config.hidden_size
+                self.layers[f"transformer_block{i}"] = GPT2Block(
+                    hidden_size=config.hidden_size,
+                    num_heads=config.num_attn_heads,
                 )
-
-        self.layers = layers
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.pos_embedding = nn.Embedding(
             config.max_position_embeddings, config.hidden_size
         )
+        self.sequential_layers = nn.Sequential(self.layers)
+        self.final_norm = nn.LayerNorm([config.hidden_size])
 
     def forward(
         self, x: t.Tensor
@@ -60,17 +59,17 @@ class SparseMoETransformer(nn.Module):
         """
         x: batch seq_length
         """
+
         # Get position of tokens
         seq_length = x.shape[1]
         pos = t.arange(0, seq_length).to(x.device)
 
         # Combine token and positional embeddings
         x = self.token_embedding(x) + self.pos_embedding(pos)
-        # print("x.shape", x.shape)
 
         # Initialise cache for routing and use for MoE layers
         cache: OrderedDict[str, t.Tensor] = collections.OrderedDict()
-        for idx, layer in self.layers.items():
+        for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("moe"):
                 x, cache[idx] = layer(x, cache)
             else:
@@ -82,22 +81,14 @@ class SparseMoETransformer(nn.Module):
             "b s h, v h -> b s v", z, self.token_embedding.weight
         )  # batch seq vocab_size
 
-        # print(z)
-        # print(cache)
-
         return out, cache
 
 
 def sample_next_token(input: str, model: nn.Module) -> str:
-    # Embed
-    # Forward auto-regressively until stop token
-
     # Tokenise input
     tokenizer = tiktoken.encoding_for_model(config.tokeniser_string)
     tokens_list = tokenizer.encode(input)
     tokens = t.Tensor(tokens_list).long().unsqueeze(0)  # batch seq
-    print(tokens)
-    print(len(tokens))
 
     # Forward pass tokens
     with t.inference_mode():
@@ -118,23 +109,25 @@ def sample_next_token(input: str, model: nn.Module) -> str:
 
 def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     """
+    Given the token path cache, return where a given token was routed to.
+    Show the path as a heatmap.
+
     cache: OrderedDict[str, t.Tensor]
+    cache_tensor: shape (k, num_experts)
+    out: dict[str, np.ndarray]
     """
 
     filtered_cache = {k: v for k, v in cache.items() if k.startswith("moe_layer_")}
 
     out = dict()
 
-    print(f"{filtered_cache = }")
-    print(len(filtered_cache))
+    # Build up dictionary of layer: binary array of whether token was routed to each expert on a layer
     for layer, token_assignments in filtered_cache.items():
-        print(layer, token_assignments)
         bool_token_assignment = token_assignments == token_num
-        print(bool_token_assignment)
         out[layer] = bool_token_assignment.max(dim=0)[0].numpy()
 
-    array = np.array(list(out.values()))
-    num_experts = array.shape[1]
+    array = np.array(list(out.values()))  # num_expert_layer, num_experts
+    _num_expert_layers, num_experts = array.shape
 
     fig = px.imshow(
         array,
@@ -150,12 +143,12 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
 def main():
     model = SparseMoETransformer()
     x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
-    y, _cache = model(x)
-    # token_0_path = token_path(cache=cache, token_num=0)
+    y, cache = model(x)
+
+    _token_0_path = token_path(cache=cache, token_num=0)
     # output_str = sample_next_token(model=model, input="Hello")
-    print("cache")
-    print(_cache)
-    return y, _cache
+
+    return y, cache
 
 
 if __name__ == "__main__":

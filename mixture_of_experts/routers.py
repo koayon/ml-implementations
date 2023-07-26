@@ -1,8 +1,9 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch as t
-from config import MoEConfig
 from torch import nn
+
+from mixture_of_experts.config import MoEConfig
 
 config = MoEConfig()
 

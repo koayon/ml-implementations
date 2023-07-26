@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
 from tqdm import tqdm
 
-from switch_transformer.model import SparseMoETransformer
+from mixture_of_experts.model import SparseMoETransformer
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
@@ -35,8 +35,7 @@ def get_text_data(
 
     train_data = full_data[:train_split]
     test_data = full_data[train_split:]
-    # print(f"{train_data.shape=}")
-    # print(f"{test_data.shape=}")
+
     return train_data, test_data  # vectors of ints
 
 
@@ -57,13 +56,9 @@ class ShakespeareDataset(Dataset):
 
 def evaluate(model: nn.Module, test_dataloader: DataLoader) -> float:
     """Evaluate the model on the test set."""
-    # print(f"{len(test_dataloader)}")
     with t.inference_mode():
         total_loss = 0
         for _batch_num, batch_data in enumerate(test_dataloader):
-            # batch_data  # batch, seq_len
-            # print(f"{batch_data.shape=}")
-
             # Predictions are shifted right by one
             target_tokens = batch_data[:, 1:]  # batch, seq_len - 1
 
@@ -113,34 +108,29 @@ def train(model: nn.Module) -> nn.Module:
 
     # Train the model
     for epoch in range(1, 2):
-        model.train()
-        for sample_batch_num, batch_data in enumerate(train_dataloader):
-            # batch_data  # batch seq_len
-
-            # print(f"{batch_data.shape=}")
+        for sample_batch_num, batch_data in enumerate(
+            train_dataloader
+        ):  # batch, seq_len
+            model.train()
 
             optimiser.zero_grad()
 
             target_tokens = batch_data[:, 1:]  # batch seq_len - 1
             logits, _cache = model(batch_data)
             logits = logits[:, :-1, :]  # batch seq_len - 1, vocab_size
-            # print(f"{logits=}")
-            # print(logits.shape)
 
             # Flatten for cross entropy
             flattened_logits = rearrange(logits, "b s v -> (b s) v")  # bs, vocab_size
             flattened_targets = rearrange(target_tokens, "b s -> (b s)")  # bs
-
-            # print(f"{probs.shape=}")
-            # print(f"{targets.shape=}")
 
             loss = F.cross_entropy(flattened_logits, flattened_targets)
 
             loss.backward()
             optimiser.step()
 
-            # if batch_num % 5 == 0:
-            if True:
+            if sample_batch_num % 5 == 0:
+                # if True:
+                model.eval()
                 test_loss = evaluate(model, test_dataloader)
                 print(
                     f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
@@ -163,10 +153,8 @@ def count_parameters(model: nn.Module) -> int:
 
 def main():
     # Set up the model
-    model = SparseMoETransformer(config=config)
+    model = SparseMoETransformer(config=config).to(device)
     print(f"{count_parameters(model)=}")  # 26M parameter model
-
-    model = model.to(device)
 
     # Train the model
     trained_model = train(model)

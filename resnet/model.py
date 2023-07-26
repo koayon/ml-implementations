@@ -64,7 +64,8 @@ class ResNet34(nn.Module):
 
         Return: shape (batch, n_classes)
         """
-        x = self.resnet(x)
-        print(x.shape)
+        x = self.resnet(x)  # batch, channels, height, width
 
-        return self.final_functions(x)
+        y = self.final_functions(x)  # batch, n_classes
+
+        return y

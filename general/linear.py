@@ -22,8 +22,6 @@ class Linear(nn.Module):
             # If `bias` is False, set `self.bias` to None.
             self.bias = None
 
-        # print(dict(self.named_parameters())  )
-
     def forward(self, x: t.Tensor) -> t.Tensor:
         """
         x: shape (*, in_features)

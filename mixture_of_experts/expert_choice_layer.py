@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 import torch as t
-from config import MoEConfig
 from einops import rearrange, repeat
 from fancy_einsum import einsum
 from torch import nn
 from torch.nn import functional as F
+
+from mixture_of_experts.config import MoEConfig
 
 ROUTERS = ["linear", "hash", ...]
 
@@ -77,18 +78,12 @@ class ExpertChoiceFFN(nn.Module):
         P: t.Tensor = nn.functional.one_hot(
             chosen_token_index, num_classes=batch_seq_size
         )  # k num_experts (one-hot)
-        # print(f"{P.shape=}")
 
         P = rearrange(P, "k num_experts bs -> bs k num_experts")  # bs k num_experts
-        # print(f"{P.shape=}")
 
         # Extract relevant sections of P, G
         P_expert = P[..., expert_num] * 1.0  # bs k
         G_expert = G[:, expert_num]  # k
-
-        # print(f"{P_expert.shape=}")
-        # print(f"{x.shape=}")
-        # print(f"{G_expert.shape=}")
 
         tokens_for_expert = einsum(
             "bs k, bs hidden_size -> k hidden_size", P_expert, x
@@ -98,7 +93,6 @@ class ExpertChoiceFFN(nn.Module):
         E = self.expert_dropout(
             self.experts[expert_num](tokens_for_expert)
         )  # k hidden_size
-        # print(f"{E.shape=}")
 
         x_out = einsum(
             "bs k, k, k hidden_size -> bs hidden_size", P_expert, G_expert, E
@@ -125,19 +119,12 @@ class ExpertChoiceFFN(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         h = self.routing_dropout(self.router(x))  # bs num_experts
 
-        # print(h.shape)
-
         # Calculate router score or Gate Value
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
-        if cache is not None and self.layer_id.startswith("expert_layer"):
+        if cache is not None and self.layer_id.startswith("moe_layer"):
             cache[self.layer_id] = chosen_token_index
-
-        # print(f"{G.shape=}")
-        # print(f"{chosen_token_index.shape=}")
-
-        # print(chosen_token_index)
 
         # Collect expert results from parallelised expert forward
         expert_results = [
@@ -168,7 +155,6 @@ def main():
 
     x = t.rand(size=(3, 4, 16))  # batch seq hidden_size
 
-    # print(f"{expert_layer(x, cache = {})}")
     y, cache = expert_layer(x, cache={})
     print(cache)
 
