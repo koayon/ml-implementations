@@ -179,3 +179,301 @@ class TransformerSampler:
         )  # batch
 
         return sampled_tokens
+
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int,
+        stop_at_end_token: bool = True,
+        *,
+        temperature: float = 1.0,
+        top_k: int = 0,
+        top_p: float = 0.0,
+    ) -> str:
+        """Generate a sequence of tokens.
+
+        Returns:
+        generated_output: str
+        """
+
+        # Tokenise input
+        input_tokens = t.tensor(self.tokenizer.encode(prompt))  # seq
+        x = input_tokens.unsqueeze(0)  # batch seq
+
+        # Initialise variables
+        generated_tokens_list = []
+
+        # Loop over length
+        for _ in tqdm(range(max_tokens)):
+            # Sample next token
+            sampled_token = self.sample_next_token(
+                input_tokens=x,
+                top_k=top_k,
+                top_p=top_p,
+                temperature=temperature,
+            )  # batch
+
+            out_token = sampled_token[0].item()  # int
+            generated_tokens_list.append(out_token)
+
+            if stop_at_end_token and out_token == self.eot_token:
+                break
+
+        return self.tokenizer.decode(generated_tokens_list)
+
+    def generate_beam_search(
+        self,
+        prompt: str,
+        num_return_sequences: int,
+        num_beams: int,
+        max_new_tokens: int,
+        no_repeat_ngram_size: int = 0,
+    ) -> str:
+        """Generate a sequence of tokens using beam search.
+
+        Returns:
+        generated_output: str
+        """
+        # Tokenise input
+        input_tokens = t.tensor(self.tokenizer.encode(prompt))  # seq
+        x = input_tokens.unsqueeze(0)  # 1 seq
+
+        # assert num_return_sequences <= num_beams
+        self.model.eval()
+
+        beams = Beams(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            logprob_sums=t.zeros(x.shape[0]),  # batch
+            tokens=x,
+        )
+
+        collected_beams = Beams(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            logprob_sums=None,
+            tokens=None,
+        )
+
+        for i in range(max_new_tokens):
+            # Generate new beams branching off from the current set of beams
+            generated_beams = beams.generate(
+                toks_per_beam=num_beams, no_repeat_ngram_size=no_repeat_ngram_size
+            )
+
+            # Print results
+            generated_beams.print(title=f"Generated beams - step {i}")
+
+            # Filter the new beams to get the best `num_beams` continuations
+            best_continuing_beams, best_terminated_beams = generated_beams.filter(
+                num_beams=num_beams
+            )
+
+            # Add the best terminated continuations to the current set of beams
+            collected_beams += best_terminated_beams
+            num_beams -= len(best_terminated_beams)
+
+            # Continue with the best continuing beams
+            beams = best_continuing_beams
+
+            # If all the beams terminated then stop
+            if num_beams == 0:
+                break
+
+        # Add the best beams to the collected beams
+        collected_beams += beams
+
+        # Choose the best token completion by logprob sum
+        logprobs_and_completions = collected_beams.logprobs_and_completions
+        best_logprob_sum = max(logprobs_and_completions.keys())
+        best_completion = logprobs_and_completions[best_logprob_sum]
+
+        return best_completion
+
+
+class Beams:
+    """Class to store beams during beam search."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: tiktoken.Encoding,
+        logprob_sums: Optional[Float[t.Tensor, "beam"]],
+        tokens: Optional[Int[t.Tensor, "beam seq"]],
+    ):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.eot_token = tokenizer.eot_token
+
+        self.logprob_sums = logprob_sums
+        self.tokens = tokens
+
+    def new_beams(self, logprob_sums, tokens) -> "Beams":
+        """Creates a new Beams object with the same model and tokenizer."""
+        return Beams(
+            self.model,
+            self.tokenizer,
+            logprob_sums,
+            tokens,
+        )
+
+    def __getitem__(self, idx) -> "Beams":
+        """Allows you to take a slice of the beams object along the batch dimension."""
+        if self.logprob_sums is None or self.tokens is None:
+            return self
+        return self.new_beams(self.logprob_sums[idx], self.tokens[idx])
+
+    def __len__(self) -> int:
+        """Returns the number of beams."""
+        if self.logprob_sums is None:
+            return 0
+        return len(self.logprob_sums)
+
+    def __add__(self, other) -> "Beams":
+        """Combines two beams objects."""
+        if self.logprob_sums is None or self.tokens is None:
+            return other
+
+        return self.new_beams(
+            t.cat([self.logprob_sums, other.logprob_sums], dim=0),  # beam
+            t.cat(
+                [self.tokens, other.tokens], dim=0
+            ),  # beam seq (seqs may be different lengths)
+        )
+
+    @property
+    def logprobs_and_completions(self) -> Dict[float, str]:
+        """Returns self as a list of logprob sums and completions (useful for getting final output)."""
+        if self.tokens is None or self.logprob_sums is None:
+            return {}
+
+        return {
+            logprob_sum.item(): self.tokenizer.decode(tokens.numpy().tolist())
+            for (logprob_sum, tokens) in zip(self.logprob_sums, self.tokens)
+        }
+
+    def generate(
+        self, toks_per_beam: int, no_repeat_ngram_size: Optional[int] = None
+    ) -> "Beams":
+        """
+        Starting from the current set of beams (which has length `num_beams`), returns a new
+        set of `num_beams * toks_per_beam`, containing the best `toks_per_beam` continuations for each
+        of the original beams.
+
+        Optional argument `no_repeat_ngram_size` means your model won't generate any sequences with
+        a repeating n-gram of this length.
+        """
+
+        if self.tokens is None:
+            return self
+
+        # Forward model for next prediction
+        logits = self.model(self.tokens)  # beam seq vocab_size
+        next_token_logits = logits[:, -1, :]  # beam vocab_size
+
+        # Get log_softmax of next token logits. We use this so they are comparable across beams.
+        next_token_logprobs = F.log_softmax(
+            next_token_logits, dim=-1
+        )  # beam vocab_size
+
+        # Restrict to top_k next predictions
+        top_token_logprobs, top_token_indices = t.topk(
+            next_token_logprobs, k=toks_per_beam, dim=-1
+        )  # beam toks_per_beam
+
+        # Add logprobs of continuations to logprobs of beams. (First repeat logprob_sums to match shapes for addition.)
+        broadcasted_logprob_sums = repeat(
+            self.logprob_sums, "beam -> beam toks_per_beam", toks_per_beam=toks_per_beam
+        )  # beam toks_per_beam
+        logprob_sums_for_continuations = (
+            broadcasted_logprob_sums + top_token_logprobs
+        )  # beam, toks_per_beam
+
+        # Concatenate our new token predictions onto the end of the completions
+        broadcasted_prev_tokens = repeat(
+            self.tokens,
+            "beam seq -> beam toks_per_beam seq",
+            toks_per_beam=toks_per_beam,
+        )
+
+        tokens_for_continuations = t.stack(
+            [broadcasted_prev_tokens, top_token_indices], dim=-1
+        )  # beam, toks_per_beam, seq + 1
+
+        # Flatten down to the expected dimensions with num_beam * toks_per_beam being the new batch dim
+        out_logprobs = t.flatten(
+            logprob_sums_for_continuations, start_dim=0, end_dim=-1
+        )  # beam * toks_per_beam
+        out_tokens = t.flatten(
+            tokens_for_continuations, start_dim=0, end_dim=1
+        )  # beam * toks_per_beam, seq + 1
+
+        return self.new_beams(
+            logprob_sums=logprob_sums_for_continuations, tokens=top_token_indices
+        )
+
+        # TODO: Implement no_repeat_ngram_size
+
+    def filter(
+        self,
+        num_beams: int,
+    ) -> Tuple["Beams", "Beams"]:
+        """
+        self.logprob_sums: beam * toks_per_beam
+        self.tokens: beam * toks_per_beam, seq + 1
+
+        Returns:
+            best_beams: Beams
+                filtered version of self, containing all best `num_beams` which are also not terminated.
+
+            early_terminations: Beams
+                filtered version of self, containing all best `num_beams` which are also terminated.
+                i.e. the sum of lengths of these two should equal `num_beams`.
+        """
+        if self.tokens is None or self.logprob_sums is None:
+            return self, self
+
+        # Get top "num_beams" of the larger set of beams
+        top_log_probsums, top_indices = t.topk(
+            self.logprob_sums, k=num_beams
+        )  # num_beams
+
+        # Get the associated tokens
+        top_pred_tokens = self.tokens[top_indices]  # num_beams, seq
+
+        # Check if the final tokem is an end token
+        top_final_tokens = top_pred_tokens[:, -1]  # num_beams
+        seq_finished_bool = top_final_tokens == self.eot_token  # num_beams
+        seq_not_finished = top_final_tokens != self.eot_token  # num_beams
+
+        # Between these two there are num_beams beams: some terminated, some not
+        best_beams = self[seq_not_finished]
+        early_terminations = self[seq_finished_bool]
+
+        return best_beams, early_terminations
+
+    def print(self, title="Best completions", max_print_chars=80) -> None:
+        """
+        Prints out a set of sequences with their corresponding logitsums.
+        """
+        if self.tokens is None or self.logprob_sums is None:
+            return
+
+        if len(self.tokens) == 0:
+            return
+
+        table = Table("logitsum", "completion", title=title)
+        for logprob_sum, tokens in zip(self.logprob_sums, self.tokens):
+            text = self.tokenizer.decode(tokens.numpy().tolist())
+            if len(repr(text)) > max_print_chars:
+                text = (
+                    text[: int(0.3 * max_print_chars)]
+                    + " ... "
+                    + text[-int(0.7 * max_print_chars) :]
+                )
+            table.add_row(f"{logprob_sum:>8.3f}", repr(text))
+        rprint(table)
+
+
+if __name__ == "__main__":
+    pass
