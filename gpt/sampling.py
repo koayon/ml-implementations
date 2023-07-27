@@ -1,21 +1,26 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import tiktoken
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, reduce, repeat
 from jaxtyping import Float, Int
-from rich import print as rprint
-from rich.table import Table
 from tqdm.auto import tqdm
+
+from gpt.beams import Beams
+from gpt.model import GPT2, GPTConfig
 
 
 class TransformerSampler:
-    def __init__(self, model: nn.Module, tokenizer: tiktoken.Encoding):
-        self.model = model
-        self.config = model.config
+    def __init__(
+        self,
+        model: Optional[nn.Module] = None,
+        tokenizer: tiktoken.Encoding = tiktoken.encoding_for_model("gpt2"),
+    ):
+        self.model = model or GPT2(with_pretrained_weights=True)
+        self.config = self.model.config
+
         self.tokenizer = tokenizer
         self.eot_token = tokenizer.eot_token
 
@@ -125,9 +130,7 @@ class TransformerSampler:
         # Forward pass tokens
         with t.inference_mode():
             with t.no_grad():
-                all_logits, _cache = self.model(
-                    t.Tensor(input_tokens)
-                )  # batch seq vocab_size
+                all_logits, _cache = self.model(input_tokens)  # batch seq vocab_size
 
         # Here we're looking at the next token for the first batch
         logits: t.Tensor = all_logits[:, -1, :]  # batch vocab_size
@@ -198,13 +201,13 @@ class TransformerSampler:
 
         # Tokenise input
         input_tokens = t.tensor(self.tokenizer.encode(prompt))  # seq
-        x = input_tokens.unsqueeze(0)  # batch seq
+        x = input_tokens.unsqueeze(0)  # 1 seq
 
         # Initialise variables
         generated_tokens_list = []
 
         # Loop over length
-        for _ in tqdm(range(max_tokens)):
+        for _timestep in tqdm(range(max_tokens)):
             # Sample next token
             sampled_token = self.sample_next_token(
                 input_tokens=x,
@@ -215,6 +218,7 @@ class TransformerSampler:
 
             out_token = sampled_token[0].item()  # int
             generated_tokens_list.append(out_token)
+            x = t.cat([x, sampled_token.unsqueeze(0)], dim=1)  # batch seq
 
             if stop_at_end_token and out_token == self.eot_token:
                 break
@@ -224,9 +228,9 @@ class TransformerSampler:
     def generate_beam_search(
         self,
         prompt: str,
-        num_return_sequences: int,
-        num_beams: int,
         max_new_tokens: int,
+        num_return_sequences: int = None,
+        num_beams: int = 4,
         no_repeat_ngram_size: int = 0,
     ) -> str:
         """Generate a sequence of tokens using beam search.
@@ -248,12 +252,14 @@ class TransformerSampler:
             tokens=x,
         )
 
-        collected_beams = Beams(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            logprob_sums=None,
-            tokens=None,
-        )
+        collected_beams = [
+            Beams(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                logprob_sums=None,
+                tokens=None,
+            )
+        ]
 
         for i in range(max_new_tokens):
             # Generate new beams branching off from the current set of beams
@@ -270,7 +276,7 @@ class TransformerSampler:
             )
 
             # Add the best terminated continuations to the current set of beams
-            collected_beams += best_terminated_beams
+            collected_beams += [best_terminated_beams]
             num_beams -= len(best_terminated_beams)
 
             # Continue with the best continuing beams
@@ -281,196 +287,26 @@ class TransformerSampler:
                 break
 
         # Add the best beams to the collected beams
-        collected_beams += beams
+        collected_beams += [beams]
 
         # Choose the best token completion by logprob sum
-        logprobs_and_completions = collected_beams.logprobs_and_completions
-        best_logprob_sum = max(logprobs_and_completions.keys())
-        best_completion = logprobs_and_completions[best_logprob_sum]
+        collected_beams_dict = {}
+        for beam in collected_beams:
+            collected_beams_dict.update(beam.logprobs_and_completions)
+
+        best_logprob_sum = max(collected_beams_dict.keys())
+        best_completion = collected_beams_dict[best_logprob_sum]
 
         return best_completion
 
 
-class Beams:
-    """Class to store beams during beam search."""
-
-    def __init__(
-        self,
-        model: nn.Module,
-        tokenizer: tiktoken.Encoding,
-        logprob_sums: Optional[Float[t.Tensor, "beam"]],
-        tokens: Optional[Int[t.Tensor, "beam seq"]],
-    ):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.eot_token = tokenizer.eot_token
-
-        self.logprob_sums = logprob_sums
-        self.tokens = tokens
-
-    def new_beams(self, logprob_sums, tokens) -> "Beams":
-        """Creates a new Beams object with the same model and tokenizer."""
-        return Beams(
-            self.model,
-            self.tokenizer,
-            logprob_sums,
-            tokens,
-        )
-
-    def __getitem__(self, idx) -> "Beams":
-        """Allows you to take a slice of the beams object along the batch dimension."""
-        if self.logprob_sums is None or self.tokens is None:
-            return self
-        return self.new_beams(self.logprob_sums[idx], self.tokens[idx])
-
-    def __len__(self) -> int:
-        """Returns the number of beams."""
-        if self.logprob_sums is None:
-            return 0
-        return len(self.logprob_sums)
-
-    def __add__(self, other) -> "Beams":
-        """Combines two beams objects."""
-        if self.logprob_sums is None or self.tokens is None:
-            return other
-
-        return self.new_beams(
-            t.cat([self.logprob_sums, other.logprob_sums], dim=0),  # beam
-            t.cat(
-                [self.tokens, other.tokens], dim=0
-            ),  # beam seq (seqs may be different lengths)
-        )
-
-    @property
-    def logprobs_and_completions(self) -> Dict[float, str]:
-        """Returns self as a list of logprob sums and completions (useful for getting final output)."""
-        if self.tokens is None or self.logprob_sums is None:
-            return {}
-
-        return {
-            logprob_sum.item(): self.tokenizer.decode(tokens.numpy().tolist())
-            for (logprob_sum, tokens) in zip(self.logprob_sums, self.tokens)
-        }
-
-    def generate(
-        self, toks_per_beam: int, no_repeat_ngram_size: Optional[int] = None
-    ) -> "Beams":
-        """
-        Starting from the current set of beams (which has length `num_beams`), returns a new
-        set of `num_beams * toks_per_beam`, containing the best `toks_per_beam` continuations for each
-        of the original beams.
-        """
-
-        if self.tokens is None:
-            return self
-
-        # Forward model for next prediction
-        logits = self.model(self.tokens)  # beam seq vocab_size
-        next_token_logits = logits[:, -1, :]  # beam vocab_size
-
-        # Get log_softmax of next token logits. We use this so they are comparable across beams.
-        next_token_logprobs = F.log_softmax(
-            next_token_logits, dim=-1
-        )  # beam vocab_size
-
-        # Restrict to top_k next predictions
-        top_token_logprobs, top_token_indices = t.topk(
-            next_token_logprobs, k=toks_per_beam, dim=-1
-        )  # beam toks_per_beam
-
-        # Add logprobs of continuations to logprobs of beams. (First repeat logprob_sums to match shapes for addition.)
-        broadcasted_logprob_sums = repeat(
-            self.logprob_sums, "beam -> beam toks_per_beam", toks_per_beam=toks_per_beam
-        )  # beam toks_per_beam
-        logprob_sums_for_continuations = (
-            broadcasted_logprob_sums + top_token_logprobs
-        )  # beam, toks_per_beam
-
-        # Concatenate our new token predictions onto the end of the completions
-        broadcasted_prev_tokens = repeat(
-            self.tokens,
-            "beam seq -> beam toks_per_beam seq",
-            toks_per_beam=toks_per_beam,
-        )
-
-        tokens_for_continuations = t.stack(
-            [broadcasted_prev_tokens, top_token_indices], dim=-1
-        )  # beam, toks_per_beam, seq + 1
-
-        # Flatten down to the expected dimensions with num_beam * toks_per_beam being the new batch dim
-        out_logprobs = t.flatten(
-            logprob_sums_for_continuations, start_dim=0, end_dim=-1
-        )  # beam * toks_per_beam
-        out_tokens = t.flatten(
-            tokens_for_continuations, start_dim=0, end_dim=1
-        )  # beam * toks_per_beam, seq + 1
-
-        return self.new_beams(
-            logprob_sums=logprob_sums_for_continuations, tokens=top_token_indices
-        )
-
-        # TODO: Implement no_repeat_ngram_size
-
-    def filter(
-        self,
-        num_beams: int,
-    ) -> Tuple["Beams", "Beams"]:
-        """
-        self.logprob_sums: beam * toks_per_beam
-        self.tokens: beam * toks_per_beam, seq + 1
-
-        Returns:
-            best_beams: Beams
-                filtered version of self, containing top `num_beams` which are also not terminated.
-
-            early_terminations: Beams
-                filtered version of self, containing top `num_beams` which are also terminated.
-                i.e. the sum of lengths of these two should equal `num_beams`.
-        """
-        if self.tokens is None or self.logprob_sums is None:
-            return self, self
-
-        # Get top "num_beams" of the larger set of beams
-        top_log_probsums, top_indices = t.topk(
-            self.logprob_sums, k=num_beams
-        )  # num_beams
-
-        # Get the associated tokens
-        top_pred_tokens = self.tokens[top_indices]  # num_beams, seq
-
-        # Check if the final tokem is an end token
-        top_final_tokens = top_pred_tokens[:, -1]  # num_beams
-        seq_finished_bool = top_final_tokens == self.eot_token  # num_beams
-        seq_not_finished = top_final_tokens != self.eot_token  # num_beams
-
-        # Between these two there are num_beams beams: some terminated, some not
-        best_beams = self[seq_not_finished]
-        early_terminations = self[seq_finished_bool]
-
-        return best_beams, early_terminations
-
-    def print(self, title="Best completions", max_print_chars=80) -> None:
-        """
-        Prints out a set of sequences with their corresponding logitsums.
-        """
-        if self.tokens is None or self.logprob_sums is None:
-            return
-
-        if len(self.tokens) == 0:
-            return
-
-        table = Table("logitsum", "completion", title=title)
-        for logprob_sum, tokens in zip(self.logprob_sums, self.tokens):
-            text = self.tokenizer.decode(tokens.numpy().tolist())
-            if len(repr(text)) > max_print_chars:
-                text = (
-                    text[: int(0.3 * max_print_chars)]
-                    + " ... "
-                    + text[-int(0.7 * max_print_chars) :]
-                )
-            table.add_row(f"{logprob_sum:>8.3f}", repr(text))
-        rprint(table)
-
-
 if __name__ == "__main__":
-    pass
+    model_sampler = TransformerSampler()
+
+    PROMPT = "Paul Graham is an English computer scientist, essayist, entrepreneur, venture capitalist, and author. He is best known for his work on the programming language Lisp, his former startup Viaweb (later renamed Yahoo! Store), cofounding the influential startup accelerator and seed capital firm Y Combinator, his essays, and Hacker News. He is the author of several computer programming books, including:"
+
+    sampled_tokens = model_sampler.generate_beam_search(
+        prompt=PROMPT,
+        max_new_tokens=10,
+    )
+    print(sampled_tokens)

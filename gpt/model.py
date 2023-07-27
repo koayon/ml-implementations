@@ -44,7 +44,7 @@ class GPT2(nn.Module):
     final_layer_norm: nn.LayerNorm
     blocks: helpers.StaticModuleList[GPT2Block]
 
-    def __init__(self, config: GPTConfig):
+    def __init__(self, config: GPTConfig = config, with_pretrained_weights=True):
         super().__init__()
 
         self.config = config
@@ -72,6 +72,9 @@ class GPT2(nn.Module):
         self.final_layer_norm = nn.LayerNorm(
             config.hidden_size, eps=config.layer_norm_epsilon
         )
+
+        if with_pretrained_weights:
+            self.load_pretrained_weights()
 
     def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
         """
@@ -103,7 +106,7 @@ class GPT2(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        return logits
+        return logits, cache
 
     def load_pretrained_weights(self):
         """Load weights from OpenAI's pretrained model from HuggingFace."""
@@ -151,12 +154,13 @@ class GPT2(nn.Module):
 
 
 if __name__ == "__main__":
-    model = GPT2(config)
+    model = GPT2(config, with_pretrained_weights=True)
     x = t.randint(0, config.vocab_size, (1, 10))
-    model.load_pretrained_weights()
     logits = model(x)
     print(logits)
     print(logits.shape)
+
+    print(model.config)
 
     with SummaryWriter(comment="ModelArchitecture") as w:
         w.add_graph(model, (x,))
