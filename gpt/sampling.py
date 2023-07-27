@@ -359,9 +359,6 @@ class Beams:
         Starting from the current set of beams (which has length `num_beams`), returns a new
         set of `num_beams * toks_per_beam`, containing the best `toks_per_beam` continuations for each
         of the original beams.
-
-        Optional argument `no_repeat_ngram_size` means your model won't generate any sequences with
-        a repeating n-gram of this length.
         """
 
         if self.tokens is None:
@@ -424,10 +421,10 @@ class Beams:
 
         Returns:
             best_beams: Beams
-                filtered version of self, containing all best `num_beams` which are also not terminated.
+                filtered version of self, containing top `num_beams` which are also not terminated.
 
             early_terminations: Beams
-                filtered version of self, containing all best `num_beams` which are also terminated.
+                filtered version of self, containing top `num_beams` which are also terminated.
                 i.e. the sum of lengths of these two should equal `num_beams`.
         """
         if self.tokens is None or self.logprob_sums is None:

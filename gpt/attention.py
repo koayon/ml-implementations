@@ -57,7 +57,9 @@ class UnidirectionalAttention(nn.Module):
 
         # Apply W_qkv to x to get q, k, v
         qkv = self.qkv_proj(x)  # (batch, seq, 3 * num_heads * head_size)
-        q, k, v = t.split(qkv, (self.num_heads * self.head_size), dim=-1)
+        q, k, v = t.split(
+            qkv, (self.num_heads * self.head_size), dim=-1
+        )  # (batch, seq, num_heads * head_size)
 
         q = rearrange(
             q, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
@@ -98,3 +100,11 @@ class UnidirectionalAttention(nn.Module):
         out = self.resid_dropout(out)
 
         return out
+
+
+if __name__ == "__main__":
+    attention = UnidirectionalAttention(512, 8)
+    x = t.randn(2, 10, 512)
+    out = attention(x)
+    print(out)
+    print(out.shape)

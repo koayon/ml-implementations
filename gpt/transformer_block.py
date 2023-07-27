@@ -1,13 +1,20 @@
+from collections import OrderedDict
 from typing import Any, Optional
 
 import torch as t
+import transformers
 from einops import rearrange
 from fancy_einsum import einsum
 from torch import nn
+from transformers.activations import NewGELUActivation
 
 from gpt.attention import UnidirectionalAttention
 
-ACTIVATION_FUNCTIONS = dict(relu=nn.ReLU(), gelu=nn.GELU())
+ACTIVATION_FUNCTIONS = dict(
+    relu=nn.ReLU(),
+    gelu=nn.GELU(),
+    new_gelu=NewGELUActivation(),
+)
 
 
 class GPT2Block(nn.Module):
@@ -24,36 +31,41 @@ class GPT2Block(nn.Module):
 
     def __init__(
         self,
-        hidden_size: int = 512,
+        hidden_size: int = 768,
         num_heads: int = 12,
         dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
-        activation_function: str = "gelu",
+        activation_function: str = "new_gelu",
     ):
         super().__init__()
 
         # Attention part
-        self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-        self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
-        self.ln2 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-
         self.attention = nn.Sequential(
-            self.ln1,
-            self.attn,
-            self.ln2,
+            OrderedDict(
+                [
+                    ("ln1", nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)),
+                    (
+                        "attn",
+                        UnidirectionalAttention(
+                            hidden_size, num_heads, dropout=dropout
+                        ),
+                    ),
+                ]
+            )
         )
 
         # MLP part
-        self.linear1 = nn.Linear(hidden_size, hidden_size * 4)
-        self.activation_function = ACTIVATION_FUNCTIONS[activation_function]
-        self.linear2 = nn.Linear(hidden_size * 4, hidden_size)
-        self.dropout = nn.Dropout(dropout)
 
         self.MLP = nn.Sequential(
-            self.linear1,
-            self.activation_function,
-            self.linear2,
-            nn.Dropout(dropout),
+            OrderedDict(
+                [
+                    ("ln2", nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)),
+                    ("linear1", nn.Linear(hidden_size, hidden_size * 4)),
+                    ("activation_function", ACTIVATION_FUNCTIONS[activation_function]),
+                    ("linear2", nn.Linear(hidden_size * 4, hidden_size)),
+                    ("dropout", nn.Dropout(dropout)),
+                ]
+            )
         )
 
     def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
@@ -63,8 +75,17 @@ class GPT2Block(nn.Module):
         Return: shape (batch, seq, hidden_size)
         """
 
-        x = x + self.attention(x)
+        x += self.attention(x)
 
-        x = self.MLP(x)
+        x += self.MLP(x)
 
         return x
+
+
+if __name__ == "__main__":
+    # Test GPT2Block
+    block = GPT2Block()
+    x = t.rand(2, 10, 768)
+    y = block(x)
+    print(y.shape)
+    print(y)
