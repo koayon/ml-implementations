@@ -43,6 +43,8 @@ class GPT2(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
 
+        self.config = config
+
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.pos_embedding = nn.Embedding(
             config.max_position_embeddings, config.hidden_size

@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 data/tiny_shakespeare.txt
 moe.pt
+scratch.ipynb

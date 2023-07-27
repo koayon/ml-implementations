@@ -29,6 +29,8 @@ class SparseMoETransformer(nn.Module):
         config: MoEConfig = config,
     ):
         super().__init__()
+        self.config = config
+
         self.num_layers = config.num_layers
         self.attn_dropout = config.attn_dropout
         self.expert_dropout = config.expert_dropout
