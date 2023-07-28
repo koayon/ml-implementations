@@ -1,166 +1,260 @@
-import time
+from datetime import datetime
 from typing import Tuple
 
 import deepspeed
 import tiktoken
 import torch as t
 import torch.nn as nn
-from config import MoEConfig
 from einops import rearrange, repeat
+from torch.distributions.categorical import Categorical
 from torch.nn import functional as F
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
+from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer
+from optimisers.adam import Adam
+from optimisers.sgd import SGD
+from optimisers.sophia import Sophia
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 config = MoEConfig()
 
-
-def get_text_data(
-    data_source: str = "data/tiny_shakespeare.txt",
-) -> Tuple[t.Tensor, t.Tensor]:
-    """Get the text dataset (Shakespeare)."""
-
-    # Get text from file and convert to tensors for training
-    with open(data_source, "r") as f:
-        text = f.read()
-    tokeniser = tiktoken.encoding_for_model("gpt2")
-    tokenised_text = tokeniser.encode(text)  # list of ints
-    full_data = t.tensor(tokenised_text, dtype=t.long, device=device)  # len_of_text
-
-    # Split into train and test sets
-    train_split = int(len(tokenised_text) * 0.9)
-
-    train_data = full_data[:train_split]
-    test_data = full_data[train_split:]
-
-    return train_data, test_data  # vectors of ints
+OPTIMISERS = {
+    "adam": Adam,
+    "sgd": SGD,
+    "sophia": Sophia,
+    "pytorch-adam": t.optim.Adam,
+}
 
 
 class ShakespeareDataset(Dataset):
     """Train Dataset for Shakespeare data."""
 
     def __init__(self, data: t.Tensor, block_size: int):
-        data.to(device)
+        if block_size <= 0:
+            raise ValueError("block_size should be a positive integer")
+        if data.shape[0] < block_size:
+            raise ValueError(
+                "block_size should not be greater than the first dimension of data"
+            )
+
         self.data = data
         self.block_size = block_size
 
     def __len__(self):
-        return self.data.shape[0] - self.block_size
+        # This is the number of blocks of size `block_size` in `data`
+        return self.data.shape[0] // self.block_size
 
     def __getitem__(self, idx):
+        if idx < 0 or idx >= self.__len__():
+            raise IndexError("Index out of bounds")
+
         return self.data[idx * self.block_size : (idx + 1) * self.block_size]
 
 
-def evaluate(model: nn.Module, test_dataloader: DataLoader) -> float:
-    """Evaluate the model on the test set."""
-    with t.inference_mode():
+class Trainer:
+    Optimiser: Optimizer
+
+    def __init__(
+        self,
+        model: nn.Module = SparseMoETransformer(),
+        optimiser_string: str = "adam",
+        config: MoEConfig = config,
+    ):
+        self.model = model
+        self.config = config
+        self.optimiser_string = optimiser_string
+        self.Optimiser = OPTIMISERS[optimiser_string]
+
+    def get_text_data(
+        self,
+        data_source: str = "data/tiny_shakespeare.txt",
+    ) -> Tuple[t.Tensor, t.Tensor]:
+        """Get the text dataset (Shakespeare)."""
+
+        # Get text from file and convert to tensors for training
+        with open(data_source, "r") as f:
+            text = f.read()
+        tokeniser = tiktoken.encoding_for_model("gpt2")
+        tokenised_text = tokeniser.encode(text)  # list of ints
+        full_data = t.tensor(tokenised_text, dtype=t.long, device=device)  # len_of_text
+
+        # Split into train and test sets
+        train_split = int(len(tokenised_text) * self.config.train_test_split)
+
+        train_data = full_data[:train_split]
+        test_data = full_data[train_split:]
+
+        return train_data, test_data  # vectors of ints
+
+    @t.inference_mode()
+    def evaluate(self, test_dataloader: DataLoader) -> float:
+        """Evaluate the model on the test set."""
+
         total_loss = 0
-        for _batch_num, batch_data in enumerate(test_dataloader):
-            # Predictions are shifted right by one
-            target_tokens = batch_data[:, 1:]  # batch, seq_len - 1
+        batch_data = next(iter(test_dataloader)).to(device)
 
-            # Run model to get logits, note that we don't have ground truth for the prediction
-            logits, _cache = model(batch_data)
-            logits = logits[:, :-1, :]  # batch, seq_len - 1, vocab_size
+        model = self.model.to(device)
 
-            # Flatten for cross entropy
-            flattened_logits = rearrange(logits, "b s v -> (b s) v")
-            flattened_targets = rearrange(target_tokens, "b s -> (b s)")
+        # Predictions are shifted right by one
+        target_tokens = batch_data[:, 1:]  # batch, seq_len - 1
 
-            probs = t.softmax(logits, dim=-1)  # batch, seq_len - 1, vocab_size
+        # Run model to get logits, note that we don't have ground truth for the final prediction
+        logits, _cache = model(batch_data)
+        logits = logits[:, :-1, :]  # batch, seq_len - 1, vocab_size
 
-            loss = F.cross_entropy(flattened_logits, flattened_targets)
-            total_loss += loss.item()
+        # Flatten for cross entropy
+        flattened_logits = rearrange(logits, "b s v -> (b s) v")
+        flattened_targets = rearrange(target_tokens, "b s -> (b s)")
 
-        return total_loss / len(test_dataloader)
+        _probs = t.softmax(logits, dim=-1)  # batch, seq_len - 1, vocab_size
 
+        loss = F.cross_entropy(flattened_logits, flattened_targets)
+        total_loss += loss.item()
 
-def train(model: nn.Module) -> nn.Module:
-    """Train the model on the data source."""
-    # Get dataset
-    train_data, test_data = get_text_data()
-    train_dataset = ShakespeareDataset(train_data, block_size=128)
-    test_dataset = ShakespeareDataset(test_data, block_size=128)
+        return total_loss / self.config.batch_size
 
-    # Create dataloaders
-    train_dataloader = DataLoader(
-        train_dataset,
-        sampler=RandomSampler(train_dataset, replacement=True),
-        batch_size=8,
-        shuffle=False,
-        num_workers=6,
-    )
-    test_dataloader = DataLoader(
-        test_dataset,
-        sampler=RandomSampler(test_dataset, replacement=True),
-        batch_size=8,
-        shuffle=False,
-        num_workers=6,
-    )
+    def train(self) -> nn.Module:
+        """Train the model on the data source."""
 
-    # Set up the optimiser
-    optimiser = t.optim.Adam(model.parameters(), lr=0.001)
+        # Print config and model parameters
+        print(f"Config: \n {self.config} \n")
+        print(f"Number of parameters: {self.count_parameters}")
 
-    model.to(device)
+        # Get dataset
+        train_data, test_data = self.get_text_data()
+        train_dataset = ShakespeareDataset(
+            train_data, block_size=self.config.block_size
+        )
+        test_dataset = ShakespeareDataset(test_data, block_size=self.config.block_size)
 
-    # Train the model
-    for epoch in range(1, 2):
-        for sample_batch_num, batch_data in enumerate(
-            train_dataloader
-        ):  # batch, seq_len
-            model.train()
+        # Create dataloaders
+        train_dataloader = DataLoader(
+            train_dataset,
+            sampler=RandomSampler(train_dataset, replacement=True),
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            num_workers=6,
+        )
+        test_dataloader = DataLoader(
+            test_dataset,
+            sampler=RandomSampler(test_dataset, replacement=True),
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            num_workers=6,
+        )
 
-            optimiser.zero_grad()
+        print("Created dataloaders")
 
-            target_tokens = batch_data[:, 1:]  # batch seq_len - 1
-            logits, _cache = model(batch_data)
-            logits = logits[:, :-1, :]  # batch seq_len - 1, vocab_size
+        # t.autograd.set_detect_anomaly(True)
 
-            # Flatten for cross entropy
-            flattened_logits = rearrange(logits, "b s v -> (b s) v")  # bs, vocab_size
-            flattened_targets = rearrange(target_tokens, "b s -> (b s)")  # bs
+        model = self.model.to(device)
+        optimiser = self.Optimiser(model.parameters(), lr=self.config.learning_rate)
 
-            loss = F.cross_entropy(flattened_logits, flattened_targets)
+        # Train the model
+        for epoch in range(self.config.num_epochs):
+            data_iter = iter(train_dataloader)
+            for sample_batch_num in tqdm(range(self.config.max_iters)):
+                # Iterate over batches
+                try:
+                    batch_data = next(data_iter)
+                except:
+                    data_iter = iter(train_dataloader)
+                    batch_data = next(data_iter)
 
-            loss.backward()
-            optimiser.step()
+                batch_data = batch_data.to(device)
 
-            if sample_batch_num % 5 == 0:
-                # if True:
-                model.eval()
-                test_loss = evaluate(model, test_dataloader)
-                print(
-                    f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
-                )
-                # print(f"Epoch: {epoch}, Batch: {batch_num}, Test Loss: {loss}")
+                model.train()
+                optimiser.zero_grad()
 
-    return model
+                # Get targets
+                target_tokens = batch_data[:, 1:]  # batch seq_len - 1
 
+                # Forward pass
+                logits, _cache = model(batch_data)
+                logits = logits[:, :-1, :]  # batch seq_len - 1, vocab_size
 
-def save_model(model, model_dest):
-    """Save the model to the model_dest."""
-    full_dest = f"models/{model_dest}"
-    t.save(model.state_dict(), full_dest)
-    print(f"Saved model to {full_dest}")
+                # Flatten for cross entropy
+                flattened_logits = rearrange(
+                    logits, "b s v -> (b s) v"
+                )  # bs, vocab_size
+                flattened_targets = rearrange(target_tokens, "b s -> (b s)")  # bs
 
+                # Calculate loss and backprop
+                loss = F.cross_entropy(flattened_logits, flattened_targets)
+                loss.backward()
 
-def count_parameters(model: nn.Module) -> int:
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+                # Step optimiser
+                optimiser.step()
+                optimiser.zero_grad()
+
+                if (
+                    sample_batch_num % self.config.sophia_hessian_update_steps
+                    and self.optimiser_string == "sophia"
+                ):
+                    # Update Hessian
+
+                    # Compute forward pass and sample loss by logits to a sample (regularisation)
+                    logits, _cache = model(batch_data)  # batch, seq_len, vocab_size
+
+                    flattened_logits: t.Tensor = rearrange(
+                        logits, "b s v -> (b s) v"
+                    )  # bs, vocab_size
+
+                    samp_dist = Categorical(logits=flattened_logits)
+                    y_sample = samp_dist.sample()  # bs
+
+                    loss_sampled = F.cross_entropy(flattened_logits, y_sample)
+                    loss_sampled.backward()
+
+                    optimiser.update_hessian()
+                    optimiser.zero_grad()
+
+                if sample_batch_num % self.config.eval_steps == 0:
+                    # if True:
+                    model.eval()
+                    test_loss = self.evaluate(test_dataloader)
+                    print(
+                        f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
+                    )
+
+        return model
+
+    def save_model(self, model_name: str) -> None:
+        """Save the model to the model_dest."""
+
+        if model_name == "":
+            model_name = "moe"
+
+        # Get the current date
+        current_date = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+
+        full_dest = f"models/{model_name}_{current_date}.pt"
+
+        t.save(self.model.state_dict(), full_dest)
+        print(f"Saved model to {full_dest}")
+
+    def load_model(self, model_dest: str) -> None:
+        """Load a model from the model_dest."""
+
+        self.model.load_state_dict(t.load(model_dest))
+        print(f"Loaded model from {model_dest}")
+
+    @property
+    def count_parameters(self) -> int:
+        return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
 
 def main():
-    # Set up the model
-    model = SparseMoETransformer(config=config).to(device)
-    print(f"{count_parameters(model)=}")  # 26M parameter model
+    # Set up the trainer
+    trainer = Trainer(model=SparseMoETransformer(), optimiser_string="sgd")
 
-    # Train the model
-    trained_model = train(model)
-
-    # Save the model
-    save_model(trained_model, "moe.pt")
+    # Train and save the model
+    trainer.model = trainer.train()
+    trainer.save_model("sophia_100")
 
 
 if __name__ == "__main__":
