@@ -75,9 +75,9 @@ class GPT2Block(nn.Module):
         Return: shape (batch, seq, hidden_size)
         """
 
-        x += self.attention(x)
+        x = x + self.attention(x)
 
-        x += self.MLP(x)
+        x = x + self.MLP(x)
 
         return x
 

@@ -85,6 +85,9 @@ class SparseMoETransformer(nn.Module):
 
         return out, cache
 
+    def load_model(self, model_path: str):
+        self.load_state_dict(t.load(model_path))
+
 
 def sample_next_token(input: str, model: nn.Module) -> str:
     # Tokenise input
@@ -142,13 +145,25 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     return out
 
 
+@t.inference_mode()
 def main():
     model = SparseMoETransformer()
     x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
+
     y, cache = model(x)
 
-    _token_0_path = token_path(cache=cache, token_num=0)
-    # output_str = sample_next_token(model=model, input="Hello")
+    PROMPT = "Romeo, how I long for your touch. I need you more than"
+
+    # _token_0_path = token_path(cache=cache, token_num=0)
+    output_str = sample_next_token(model=model, input=PROMPT)
+
+    print("untrained model output:", output_str)
+
+    # model.load_model("models/adam_100_2023-07-27_18:13:03.pt")
+    model.load_model("models/sgd_100_2023-07-28_02:51:31.pt")
+
+    output_str = sample_next_token(model=model, input=PROMPT)
+    print("trained model output:", output_str)
 
     return y, cache
 

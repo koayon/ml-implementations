@@ -1,3 +1,5 @@
+"""Adam optimiser implementation."""
+
 from typing import Iterable, Optional
 
 import torch as t
@@ -5,6 +7,12 @@ from torch.optim.optimizer import Optimizer
 
 
 class Adam(Optimizer):
+    """Adam implementation from https://arxiv.org/abs/1412.6980
+    We're assuming amsgrad=False as empirically amsgrad isn't that helpful.
+
+    Reference: https://pytorch.org/docs/stable/generated/torch.optim.Adam.html#torch.optim.Adam
+    """
+
     def __init__(
         self,
         params: Iterable[t.nn.parameter.Parameter],
@@ -13,11 +21,6 @@ class Adam(Optimizer):
         eps: float = 1e-08,
         weight_decay: float = 0.0,
     ):
-        """Adam implementation from https://arxiv.org/abs/1412.6980
-        We're assuming amsgrad=False as empirically amsgrad isn't that helpful.
-
-        Reference: https://pytorch.org/docs/stable/generated/torch.optim.Adam.html#torch.optim.Adam
-        """
         self.params = list(params)
         self.lr = lr
         self.beta1, self.beta2 = betas
