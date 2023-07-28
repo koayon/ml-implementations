@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -9,6 +10,7 @@ from jaxtyping import Float, Int
 from tqdm.auto import tqdm
 
 from gpt.beams import Beams
+from gpt.cached_attention import AttentionCache
 from gpt.model import GPT2, GPTConfig
 
 
@@ -117,11 +119,12 @@ class TransformerSampler:
     def sample_next_token(
         self,
         input_tokens: t.Tensor,
+        cache: Optional[List[AttentionCache]] = None,
         *,
         top_k: int,
         top_p: float,
         temperature: float = 1.0,
-    ) -> t.Tensor:
+    ) -> Tuple[t.Tensor, List[AttentionCache]]:
         """Given a sequence of tokens, generate the next one.
 
         input_tokens: batch, seq
@@ -130,7 +133,9 @@ class TransformerSampler:
         # Forward pass tokens
         with t.inference_mode():
             with t.no_grad():
-                all_logits, _cache = self.model(input_tokens)  # batch seq vocab_size
+                all_logits, cache = self.model(
+                    input_tokens, cache
+                )  # batch seq vocab_size
 
         # Here we're looking at the next token for the first batch
         logits: t.Tensor = all_logits[:, -1, :]  # batch vocab_size
@@ -181,7 +186,7 @@ class TransformerSampler:
             logits, temperature=temperature
         )  # batch
 
-        return sampled_tokens
+        return sampled_tokens, cache
 
     def generate(
         self,
@@ -205,16 +210,22 @@ class TransformerSampler:
 
         # Initialise variables
         generated_tokens_list = []
+        cache = None
 
         # Loop over length
         for _timestep in tqdm(range(max_tokens)):
+            st_time = time.time()
             # Sample next token
-            sampled_token = self.sample_next_token(
+            sampled_token, cache = self.sample_next_token(
                 input_tokens=x,
+                cache=cache,
                 top_k=top_k,
                 top_p=top_p,
                 temperature=temperature,
             )  # batch
+
+            end_time = time.time()
+            print(f"Time taken for sample {_timestep}: {end_time - st_time}")
 
             out_token = sampled_token[0].item()  # int
             generated_tokens_list.append(out_token)
@@ -305,8 +316,12 @@ if __name__ == "__main__":
 
     PROMPT = "Paul Graham is an English computer scientist, essayist, entrepreneur, venture capitalist, and author. He is best known for his work on the programming language Lisp, his former startup Viaweb (later renamed Yahoo! Store), cofounding the influential startup accelerator and seed capital firm Y Combinator, his essays, and Hacker News. He is the author of several computer programming books, including:"
 
-    sampled_tokens = model_sampler.generate_beam_search(
+    # sampled_tokens = model_sampler.generate_beam_search(
+    #     prompt=PROMPT,
+    #     max_new_tokens=10,
+    # )
+    sampled_tokens = model_sampler.generate(
         prompt=PROMPT,
-        max_new_tokens=10,
+        max_tokens=100,
     )
     print(sampled_tokens)

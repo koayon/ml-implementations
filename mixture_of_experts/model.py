@@ -44,6 +44,7 @@ class SparseMoETransformer(nn.Module):
                 )
             else:
                 self.layers[f"transformer_block{i}"] = GPT2Block(
+                    layer_index=i,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
                 )
@@ -75,7 +76,7 @@ class SparseMoETransformer(nn.Module):
             if idx.startswith("moe"):
                 x, cache[idx] = layer(x, cache)
             else:
-                x = layer(x)
+                x, _attention_cache = layer(x)
         z = self.final_norm(x)
 
         # Unembed to get logits for each token

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 import tiktoken
 import torch as t
@@ -10,6 +10,7 @@ from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
+from gpt.cached_attention import AttentionCache
 from gpt.transformer_block import GPT2Block
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
@@ -42,7 +43,7 @@ class GPT2(nn.Module):
     token_embedding: nn.Embedding
     pos_embedding: nn.Embedding
     final_layer_norm: nn.LayerNorm
-    blocks: helpers.StaticModuleList[GPT2Block]
+    blocks: nn.ModuleList  # of GPT2Block
 
     def __init__(self, config: GPTConfig = config, with_pretrained_weights=True):
         super().__init__()
@@ -56,16 +57,17 @@ class GPT2(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-        self.blocks: nn.ModuleList[GPT2Block] = nn.ModuleList(
+        self.blocks = nn.ModuleList(
             [
                 GPT2Block(
-                    config.hidden_size,
-                    config.num_heads,
-                    config.dropout,
-                    config.layer_norm_epsilon,
-                    config.activation_function,
+                    layer_index=index,
+                    hidden_size=config.hidden_size,
+                    num_heads=config.num_heads,
+                    dropout=config.dropout,
+                    layer_norm_epsilon=config.layer_norm_epsilon,
+                    activation_function=config.activation_function,
                 )
-                for _ in range(config.num_layers)
+                for index in range(config.num_layers)
             ]
         )
 
@@ -76,14 +78,19 @@ class GPT2(nn.Module):
         if with_pretrained_weights:
             self.load_pretrained_weights()
 
-    def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
+    def forward(
+        self, x: t.Tensor, cache: Optional[List[AttentionCache]] = None
+    ) -> Tuple[t.Tensor, Optional[List[AttentionCache]]]:
         """
         x: shape (batch, seq), dtype t.int64 - the token ids
 
         Return: shape (batch, seq, vocab_size), dtype t.float32- the output logits
         """
 
-        batch_size, seq_len = x.shape
+        if cache is None:
+            cache = [None] * len(self.blocks)
+
+        _batch_size, seq_len = x.shape
 
         # Combine the token and position embeddings for the embedding layer
         tokens = self.token_embedding(x)  # (batch, seq, hidden_size)
@@ -94,8 +101,11 @@ class GPT2(nn.Module):
         x = self.dropout(x)  # batch, seq, hidden_size
 
         # Apply transformer blocks
-        for block in self.blocks:
-            x = block(x)  # batch, seq, hidden_size
+        for layer_index, block in enumerate(self.blocks):
+            x, layer_cache = block(
+                x, layer_cache=cache[layer_index]
+            )  # batch, seq, hidden_size
+            cache[layer_index] = layer_cache
 
         y = self.final_layer_norm(x)  # batch, seq, hidden_size
 
@@ -125,18 +135,18 @@ class GPT2(nn.Module):
             assert isinstance(my_block, GPT2Block)
 
             # Copy attention weights
-            self._copy_weight_bias(my_block.attention.ln1, hf_block.ln_1)
+            self._copy_weight_bias(my_block.ln1, hf_block.ln_1)
             self._copy_weight_bias(
-                my_block.attention.attn.qkv_proj, hf_block.attn.c_attn, transpose=True
+                my_block.attn.qkv_proj, hf_block.attn.c_attn, transpose=True
             )
             self._copy_weight_bias(
-                my_block.attention.attn.output_proj,
+                my_block.attn.output_proj,
                 hf_block.attn.c_proj,
                 transpose=True,
             )
-            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)
 
             # Copy MLP weights
+            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)
             self._copy_weight_bias(
                 my_block.MLP.linear1, hf_block.mlp.c_fc, transpose=True
             )

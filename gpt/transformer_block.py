@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 import torch as t
 import transformers
@@ -8,7 +8,7 @@ from fancy_einsum import einsum
 from torch import nn
 from transformers.activations import NewGELUActivation
 
-from gpt.attention import UnidirectionalAttention
+from gpt.cached_attention import AttentionCache, UnidirectionalAttention
 
 ACTIVATION_FUNCTIONS = dict(
     relu=nn.ReLU(),
@@ -31,6 +31,7 @@ class GPT2Block(nn.Module):
 
     def __init__(
         self,
+        layer_index: int,
         hidden_size: int = 768,
         num_heads: int = 12,
         dropout: float = 0.1,
@@ -39,20 +40,12 @@ class GPT2Block(nn.Module):
     ):
         super().__init__()
 
+        self.layer_index = layer_index
+
         # Attention part
-        self.attention = nn.Sequential(
-            OrderedDict(
-                [
-                    ("ln1", nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)),
-                    (
-                        "attn",
-                        UnidirectionalAttention(
-                            hidden_size, num_heads, dropout=dropout
-                        ),
-                    ),
-                ]
-            )
-        )
+
+        self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
 
         # MLP part
 
@@ -68,18 +61,22 @@ class GPT2Block(nn.Module):
             )
         )
 
-    def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
+    def forward(
+        self, x: t.Tensor, layer_cache: Optional[AttentionCache] = None
+    ) -> Tuple[t.Tensor, Optional[AttentionCache]]:
         """
         x: shape (batch, seq, hidden_size)
 
         Return: shape (batch, seq, hidden_size)
         """
+        y = self.ln1(x)
+        y, layer_cache = self.attn(y, layer_cache=layer_cache)
 
-        x = x + self.attention(x)
+        x = x + y
 
         x = x + self.MLP(x)
 
-        return x
+        return x, layer_cache
 
 
 if __name__ == "__main__":
