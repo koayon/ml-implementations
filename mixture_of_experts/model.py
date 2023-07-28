@@ -127,9 +127,13 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     out = dict()
 
     # Build up dictionary of layer: binary array of whether token was routed to each expert on a layer
-    for layer, token_assignments in filtered_cache.items():
-        bool_token_assignment = token_assignments == token_num
-        out[layer] = bool_token_assignment.max(dim=0)[0].numpy()
+    for layer, (G, token_assignments) in filtered_cache.items():
+        # Get the mask to index the routing matrix
+        bool_token_assignment = token_assignments == token_num  # k, num_experts
+
+        # Get the routing matrix for the token
+        weighted_token_assignment = G * bool_token_assignment  # k, num_experts
+        out[layer] = weighted_token_assignment.max(dim=0)[0].numpy()  # num_experts
 
     array = np.array(list(out.values()))  # num_expert_layer, num_experts
     _num_expert_layers, num_experts = array.shape
@@ -145,27 +149,34 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     return out
 
 
+def compare_models(
+    model: nn.Module, new_model_path: str, first_model_path: Optional[str] = None
+):
+    PROMPT = "Oh, tempest of the heart, yield not to sorrow's art; for love is but a"
+
+    if first_model_path is not None:
+        model.load_model(first_model_path)
+
+    first_model_output = sample_next_token(model=model, input=PROMPT)
+
+    print("First model output:", first_model_output)
+
+    model.load_model(new_model_path)
+
+    new_model_output = sample_next_token(model=model, input=PROMPT)
+    print("trained model output:", new_model_output)
+
+
 @t.inference_mode()
 def main():
     model = SparseMoETransformer()
+
     x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
+    y, cache = model(x)  # batch seq vocab_size, Cache dict
+    token_0_path = token_path(cache=cache, token_num=0)
+    print(token_0_path)
 
-    y, cache = model(x)
-
-    PROMPT = "Romeo, how I long for your touch. I need you more than"
-
-    # _token_0_path = token_path(cache=cache, token_num=0)
-    output_str = sample_next_token(model=model, input=PROMPT)
-
-    print("untrained model output:", output_str)
-
-    # model.load_model("models/adam_100_2023-07-27_18:13:03.pt")
-    model.load_model("models/sgd_100_2023-07-28_02:51:31.pt")
-
-    output_str = sample_next_token(model=model, input=PROMPT)
-    print("trained model output:", output_str)
-
-    return y, cache
+    # compare_models(model, model_path="models/sgd_100_2023-07-28_02:51:31.pt")
 
 
 if __name__ == "__main__":

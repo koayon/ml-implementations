@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange, repeat
@@ -100,12 +100,17 @@ class ExpertChoiceFFN(nn.Module):
 
         return x_out
 
-    def forward(self, x: t.Tensor, cache: Optional[dict[str, t.Tensor]] = None):
+    def forward(
+        self, x: t.Tensor, cache: Optional[dict[str, t.Tensor]] = None
+    ) -> Tuple[t.Tensor, dict[str, Tuple[t.Tensor, t.Tensor]]]:
         """
-        x: batch seq hidden_size
-        router: hidden_size num_experts
+        Args:
+            x: batch seq hidden_size
+            router: hidden_size num_experts
 
-        Return: shape (batch, seq, hidden_size)
+        Returns:
+            x: batch, seq, hidden_size
+            cache: dict of G, chosen_token_index
         """
         batch_dim, seq_length, _hidden_size = x.shape
 
@@ -124,7 +129,7 @@ class ExpertChoiceFFN(nn.Module):
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         if cache is not None and self.layer_id.startswith("moe_layer"):
-            cache[self.layer_id] = chosen_token_index
+            cache[self.layer_id] = (G, chosen_token_index)
 
         # Collect expert results from parallelised expert forward
         expert_results = [
