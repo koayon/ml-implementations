@@ -7,14 +7,6 @@ from torch.autograd.functional import hvp
 from torch.optim.optimizer import Optimizer
 
 
-def square_estimator(
-    params: t.Tensor, gradients: t.Tensor, loss_function: Callable = None
-) -> t.Tensor:
-    # We can approximate the Hessian diagonal by the element-wise product of the gradients
-    H = gradients**2
-    return H
-
-
 def hutchinson_estimator(
     params: t.Tensor,
     gradients: t.Tensor,
@@ -60,6 +52,16 @@ def hutchinson_estimator(
     return final_estimate
 
 
+def square_estimator(
+    params: t.Tensor, gradients: t.Tensor, loss_function: Callable = None
+) -> t.Tensor:
+    """We can approximate the Hessian diagonal by the element-wise product of the gradients
+
+    Reference: https://github.com/Liuhong99/Sophia"""
+    H = gradients**2
+    return H
+
+
 class Sophia(Optimizer):
     """Sophia implementation from https://arxiv.org/abs/2305.14342"""
 
@@ -72,7 +74,6 @@ class Sophia(Optimizer):
         eps: float = 1e-08,
         weight_decay: float = 0.0,
         clip_max: float = 0.01,  # paper has this as p (the greek letter row)
-        k: int = 10,  # Number of steps after which we calculate the Hessian
     ):
         self.params = list(params)
         self.lr = lr
@@ -85,7 +86,6 @@ class Sophia(Optimizer):
         self.timestep = 0
 
         # New to Sophia compared to Adam
-        self.k = k  # number of steps between which we estimate the Hessian
         self.hessians = [t.zeros_like(p) for p in self.params]  # hessians
         self.estimator = estimator  # Hessian_trace_estimator
         self.clip_max = clip_max  # Maximum parameter update
@@ -104,11 +104,8 @@ class Sophia(Optimizer):
             hessian_estimate = self.estimator(p, p.grad)
 
             # Correct the estimated Hessian with prior Hessian information to be closer to the true value with our exponential moving average (EMA)
-
             # We do this in_place for memory efficiency and to keep values accessible to the optimizer
-            self.hessians[i].mul_(self.beta2).addcmul_(
-                p.grad, p.grad, value=1 - self.beta2
-            )
+            self.hessians[i].mul_(self.beta2).add_(hessian_estimate * (1 - self.beta2))
 
     def step(self) -> None:
         self.timestep += 1

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 
 @dataclass(frozen=True)
@@ -6,31 +6,41 @@ class MoEConfig:
     "Constants used for the MoE model."
 
     # Model
-    tokeniser_string = "gpt2"
-    activation_function = "gelu"
-    num_layers = 6
-    num_experts = 4
-    num_attn_heads = 8
+    tokeniser_string: str = "gpt2"
+    activation_function: str = "gelu"
+    num_layers: int = 6
+    num_experts: int = 4
+    num_attn_heads: int = 8
 
-    hidden_size = 256
-    vocab_size = 50257
-    max_position_embeddings = 256
+    hidden_size: int = 256
+    vocab_size: int = 50257
+    max_position_embeddings: int = 256
 
-    attn_dropout = 0.1
-    expert_dropout = 0.4
-    routing_dropout = 0.1
+    attn_dropout: float = 0.1
+    expert_dropout: float = 0.4
+    routing_dropout: float = 0.1
 
-    layer_norm_epsilon = 1e-05
-    # capacity_factor = 1.25
+    layer_norm_epsilon: float = 1e-05
+    # train_capacity_factor: float = 1.25
+    # eval_capacity_factor: float = 2.5
 
-    # Training
-    max_iters = 100
-    num_epochs = 1
-    learning_rate = 0.001
+    # Training parameters
+    max_iters: int = 100
+    num_epochs: int = 1
+    learning_rate: float = 0.001
 
-    batch_size = 16
-    train_test_split = 0.9
-    block_size = 64
+    batch_size: int = 16
+    train_test_split: float = 0.9
+    block_size: int = 64
 
-    sophia_hessian_update_steps = 10
-    eval_steps = 10
+    sophia_hessian_update_steps: int = 10
+    eval_steps: int = 10
+
+    def __str__(self):
+        out = "MoEConfig:\n\n"
+        out += "\n".join(f"{k}={str(v)}" for k, v in asdict(self).items())
+        return out
+
+
+if __name__ == "__main__":
+    print(MoEConfig())

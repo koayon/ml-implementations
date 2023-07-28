@@ -56,7 +56,7 @@ class GPT2(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-        self.blocks: helpers.StaticModuleList[GPT2Block] = helpers.StaticModuleList(
+        self.blocks: nn.ModuleList[GPT2Block] = nn.ModuleList(
             [
                 GPT2Block(
                     config.hidden_size,
