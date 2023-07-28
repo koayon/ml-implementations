@@ -1,12 +1,26 @@
 from typing import Callable, Iterable
 
 import torch as t
+from fancy_einsum import einsum
+from torch.autograd import grad
+from torch.autograd.functional import hvp
 from torch.optim.optimizer import Optimizer
 
 
+def square_estimator(
+    params: t.Tensor, gradients: t.Tensor, loss_function: Callable = None
+) -> t.Tensor:
+    # We can approximate the Hessian diagonal by the element-wise product of the gradients
+    H = gradients**2
+    return H
+
+
 def hutchinson_estimator(
-    params: t.Tensor, gradients: t.Tensor, num_estimates: int = 1
-) -> float:
+    params: t.Tensor,
+    gradients: t.Tensor,
+    loss_function: Callable = None,
+    num_estimates: int = 1,
+) -> t.Tensor:
     """Hutchinson's trace estimator estimates the trace of a large matrix with a Monte Carlo estimate.
     Here we calculate the trace (sum of diagonals) of the Hessian.
 
@@ -23,37 +37,36 @@ def hutchinson_estimator(
     """
 
     assert params.shape == gradients.shape
+    assert loss_function is not None
 
-    trace_estimates = []
+    hessian_estimates = []
+
     # Do num_estimates random estimates for tr(H) and average them
     for _ in range(num_estimates):
         # Get v randomly -1 or 1
-        v_0_1 = t.randint(low=0, high=1, size=[gradients.shape[0]])
-        v = v_0_1 * 2 - 1  #
-        v.requires_grad
+        v = t.randint(low=0, high=2, size=gradients.shape).float() * 2.0 - 1.0
 
-        # Get Av (scalar)
-        Av = t.dot(gradients, v)
+        # Hession Vector product (hvp)
+        Hv = hvp(loss_function, params, v)  # same shape as params
 
-        # Calculate the gradient of Av wrt the v[i]s by autograd
-        Av.backward()
-        grad_Av = v.grad  # the gradients backpropped from Av back to the v[i]s
+        # Element-wise product, v*Hv is an estimate of the Hessian diagonal
+        vHv = v * Hv  # same shape as params
+        hessian_estimates.append(vHv)
 
-        assert grad_Av is not None
-
-        trace_estimate = t.dot(v, grad_Av)
-        trace_estimates.append(trace_estimate)
-
-    final_estimate = t.mean(t.stack(trace_estimates)).item()
+    final_estimate = t.mean(
+        t.stack(hessian_estimates, dim=-1), dim=-1
+    )  # same shape as params
 
     return final_estimate
 
 
 class Sophia(Optimizer):
+    """Sophia implementation from https://arxiv.org/abs/2305.14342"""
+
     def __init__(
         self,
         params: Iterable[t.nn.parameter.Parameter],
-        estimator: Callable[[t.Tensor, t.Tensor], float] = hutchinson_estimator,
+        estimator: Callable[[t.Tensor, t.Tensor], float] = square_estimator,
         lr: float = 0.001,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-08,
@@ -61,8 +74,6 @@ class Sophia(Optimizer):
         clip_max: float = 0.01,  # paper has this as p (the greek letter row)
         k: int = 10,  # Number of steps after which we calculate the Hessian
     ):
-        """Sophia implementation from https://arxiv.org/abs/2305.14342"""
-
         self.params = list(params)
         self.lr = lr
         self.beta1, self.beta2 = betas
@@ -75,7 +86,7 @@ class Sophia(Optimizer):
 
         # New to Sophia compared to Adam
         self.k = k  # number of steps between which we estimate the Hessian
-        self.hessian_traces = [0.0 for _ in self.params]  # hessians
+        self.hessians = [t.zeros_like(p) for p in self.params]  # hessians
         self.estimator = estimator  # Hessian_trace_estimator
         self.clip_max = clip_max  # Maximum parameter update
 
@@ -83,43 +94,41 @@ class Sophia(Optimizer):
         for p in self.params:
             p.grad = None
 
+    @t.no_grad()
+    def update_hessian(self):
+        for i, p in enumerate(self.params):
+            if p.grad is None:
+                continue
+
+            # Estimate Hessian
+            hessian_estimate = self.estimator(p, p.grad)
+
+            # Correct the estimated Hessian with prior Hessian information to be closer to the true value with our exponential moving average (EMA)
+
+            # We do this in_place for memory efficiency and to keep values accessible to the optimizer
+            self.hessians[i].mul_(self.beta2).addcmul_(
+                p.grad, p.grad, value=1 - self.beta2
+            )
+
     def step(self) -> None:
         self.timestep += 1
         with t.inference_mode():
             # p are weights for each module, p.grad are gradients from backpropping the loss
             for i, p in enumerate(self.params):
-                assert p.grad is not None
+                if p.grad is None:
+                    continue
 
                 # Calculate momentum (exponential moving averages) to incorporate information from previous gradient steps
                 self.momentum[i] = (
                     self.beta1 * self.momentum[i] + (1 - self.beta1) * p.grad
                 )
 
-                # Every k steps, we estimate the Hessian
-                if self.timestep % self.k == 1:
-                    # Estimate Hessian
-                    hessian_trace_estimate = self.estimator(p, p.grad)
-
-                    # Correct the estimated Hessiam with prior Hessian information to be closer to the true value with our exponential moving average (EMA)
-                    corrected_hessian_trace_estimate = (
-                        self.beta2 * self.hessian_traces[self.timestep - self.k]
-                        + (1 - self.beta2) * hessian_trace_estimate
-                    )
-                    self.hessian_traces[
-                        self.timestep
-                    ] = corrected_hessian_trace_estimate
-
-                else:
-                    self.hessian_traces[self.timestep] = self.hessian_traces[
-                        self.timestep - 1
-                    ]
-
                 # Apply weight decay
                 p -= self.weight_decay * self.lr * p
 
                 # Update the params in_place
                 p -= self.lr * t.clamp(
-                    self.momentum[i] / max(self.hessian_traces[i], self.eps),
+                    self.momentum[i] / t.max(self.hessians[i], t.tensor(self.eps)),
                     min=-self.clip_max,
                     max=self.clip_max,
                 )
