@@ -31,7 +31,7 @@ class MoEConfig:
     learning_rate: float = 0.001
 
     batch_size: int = 16
-    train_test_split: float = 0.9
+    train_test_split: float = 0.99
     block_size: int = 64
 
     sophia_hessian_update_steps: int = 10

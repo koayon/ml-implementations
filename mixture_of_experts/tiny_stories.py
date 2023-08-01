@@ -15,7 +15,7 @@ import requests
 import tiktoken
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler
 from tqdm import tqdm
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
@@ -99,7 +99,7 @@ def pretokenize():
     print("Done.")
 
 
-class TinyStoriesDataset(Dataset):
+class TinyStoriesDataset(IterableDataset):
     """Loads pretokenized examples from disk and yields them as PyTorch tensors."""
 
     def __init__(self, split: str = "train", max_seq_len: int = 1024):
@@ -109,7 +109,7 @@ class TinyStoriesDataset(Dataset):
 
     def __len__(self):
         # This is the number of blocks of size `block_size` in `data`
-        return 100000 // self.max_seq_len
+        return 295739 // self.max_seq_len
 
     def __iter__(self):
         # get worker info within a DataLoader
@@ -143,8 +143,8 @@ class TinyStoriesDataset(Dataset):
                     # calling .astype will copy the data into a new numpy array, now in RAM
                     chunk = torch.from_numpy((m[start:end]).astype(np.int64))
                     x = chunk[:-1]
-                    # y = chunk[1:]
-                    yield x
+                    y = chunk[1:]
+                    yield x, y
 
 
 if __name__ == "__main__":
