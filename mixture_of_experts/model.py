@@ -128,7 +128,7 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
     out = dict()
 
     # Build up dictionary of layer: binary array of whether token was routed to each expert on a layer
-    for layer, (G, token_assignments) in filtered_cache.items():
+    for layer, (G, token_assignments, _router_logits) in filtered_cache.items():
         # Get the mask to index the routing matrix
         bool_token_assignment = token_assignments == token_num  # k, num_experts
 

@@ -129,7 +129,7 @@ class ExpertChoiceFFN(nn.Module):
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         if cache is not None and self.layer_id.startswith("moe_layer"):
-            cache[self.layer_id] = (G, chosen_token_index)
+            cache[self.layer_id] = (G, chosen_token_index, h)
 
         # Collect expert results from parallelised expert forward
         expert_results = [
