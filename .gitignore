@@ -160,7 +160,7 @@ cython_debug/
 #.idea/
 
 
-data/tiny_shakespeare.txt
+data
 scratch.ipynb
 runs
 models

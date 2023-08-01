@@ -9,7 +9,6 @@ from jaxtyping import Float, Int
 from rich import print as rprint
 from rich.table import Table
 
-from gpt.cached_attention import AttentionCache
 from gpt.model import FullKeyValueCache
 
 

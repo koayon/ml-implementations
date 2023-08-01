@@ -7,11 +7,9 @@ import tiktoken
 import torch as t
 import torch.nn as nn
 from einops import rearrange, repeat
-from torch import mode, optim
-from torch.distributions.categorical import Categorical
 from torch.nn import functional as F
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 from tqdm.auto import tqdm
 from transformers.models.switch_transformers.modeling_switch_transformers import (
     router_z_loss_func,
@@ -231,8 +229,6 @@ class Trainer:
                 model_engine.step()
 
                 if sample_batch_num % self.config.eval_steps == 0:
-                    # if True:
-                    model_engine.eval()
                     test_loss = self.evaluate(test_dataloader)
                     print(
                         f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
