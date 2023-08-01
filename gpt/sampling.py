@@ -261,6 +261,7 @@ class TransformerSampler:
             tokenizer=self.tokenizer,
             logprob_sums=t.zeros(x.shape[0]),  # batch
             tokens=x,
+            attention_cache=None,
         )
 
         collected_beams = [
@@ -269,6 +270,7 @@ class TransformerSampler:
                 tokenizer=self.tokenizer,
                 logprob_sums=None,
                 tokens=None,
+                attention_cache=None,
             )
         ]
 
@@ -318,7 +320,7 @@ if __name__ == "__main__":
 
     # sampled_tokens = model_sampler.generate_beam_search(
     #     prompt=PROMPT,
-    #     max_new_tokens=10,
+    #     max_new_tokens=5,
     # )
     sampled_tokens = model_sampler.generate(
         prompt=PROMPT,
