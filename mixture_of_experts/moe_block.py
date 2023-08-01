@@ -44,10 +44,14 @@ class MoEBlock(nn.Module):
 
         Return: shape (batch seq hidden_size)
         """
-        x = x + self.ln1(self.attention_layer(x))
+        # Using PreNorm from GPT-3 paper (Brown et al)
+
+        x = x + self.attention_layer(self.ln1(x))
+
+        x = self.ln2(x)
 
         y, cache = self.expert_layer(x, cache)
 
-        x = x + self.ln2(y)
+        x = x + y
 
         return x, cache
