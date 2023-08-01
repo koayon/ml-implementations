@@ -3,7 +3,7 @@ from typing import Any, Optional, Union
 import torch as t
 from torch import nn
 
-from gpt.attention import UnidirectionalAttention
+from gpt.cached_attention import UnidirectionalAttention
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.expert_choice_layer import ExpertChoiceFFN
 
@@ -46,7 +46,8 @@ class MoEBlock(nn.Module):
         """
         # Using PreNorm from GPT-3 paper (Brown et al)
 
-        x = x + self.attention_layer(self.ln1(x))
+        y, _attn_cache = self.attention_layer(self.ln1(x))
+        x = x + y
 
         x = self.ln2(x)
 
