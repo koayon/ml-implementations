@@ -12,3 +12,8 @@ class GeLU(nn.Module):
     def forward(self, x: t.Tensor) -> t.Tensor:
         erf = t.erf(x / np.sqrt(2))
         return x / 2 * (1 + erf)
+
+
+class Swish(nn.Module):
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        return x * t.sigmoid(x)
