@@ -4,7 +4,9 @@ from typing import Any, List, Optional, Tuple
 import tiktoken
 import torch as t
 import transformers
+from einops import rearrange
 from fancy_einsum import einsum
+from jaxtyping import Float, Int
 from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
@@ -33,6 +35,74 @@ class GPTConfig:
 
 
 config = GPTConfig()
+
+FullKeyValueCacheTensor = Float[t.Tensor, "batch 2 layer seq dim"]
+
+
+def full_cache_from_cache_list(cache_list: List[AttentionCache]):
+    key_layer_caches = t.stack(
+        [layer_cache.k for layer_cache in cache_list]
+    )  # (layer, batch, head, seq, dim)
+    value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
+
+    key_layer_caches = rearrange(
+        key_layer_caches,
+        "layer batch seq dim-> batch layer seq dim",
+    )
+    value_layer_caches = rearrange(
+        value_layer_caches,
+        "layer batch seq dim-> batch layer seq dim",
+    )
+
+    print("key_layer_caches.shape", key_layer_caches.shape)
+
+    full_tensor = t.stack(
+        [key_layer_caches, value_layer_caches], dim=1
+    )  # (batch, 2, layer, seq, dim)
+    return FullKeyValueCache(full_tensor)
+
+
+class FullKeyValueCache(t.Tensor):
+    """
+    This class holds tensors of key and value vectors, to be used for caching.
+    """
+
+    def to_cache_list(self):
+        key_layer_caches = self[:, 0]
+        value_layer_caches = self[:, 1]
+
+        key_layer_caches = rearrange(
+            key_layer_caches,
+            "batch layer seq dim-> layer batch seq dim",
+        )
+        value_layer_caches = rearrange(
+            value_layer_caches,
+            "batch layer seq dim-> layer batch seq dim",
+        )
+
+        attn_cache = []
+        for key_layer_cache, value_layer_cache in zip(
+            key_layer_caches, value_layer_caches
+        ):
+            attn_cache.append(AttentionCache(k=key_layer_cache, v=value_layer_cache))
+
+        return attn_cache  # list of AttentionCaches
+
+    @property
+    def k(self) -> t.Tensor:
+        return self[:, 0]
+
+    @property
+    def v(self) -> t.Tensor:
+        return self[:, 1]
+
+    @property
+    def batch(self) -> int:
+        return self.shape[2]
+
+    @property
+    def seq_len(self) -> int:
+        return self.shape[3]
 
 
 class GPT2(nn.Module):
@@ -79,8 +149,8 @@ class GPT2(nn.Module):
             self.load_pretrained_weights()
 
     def forward(
-        self, x: t.Tensor, cache: Optional[List[AttentionCache]] = None
-    ) -> Tuple[t.Tensor, Optional[List[AttentionCache]]]:
+        self, x: t.Tensor, cache: FullKeyValueCache = None
+    ) -> Tuple[t.Tensor, FullKeyValueCache]:
         """
         x: shape (batch, seq), dtype t.int64 - the token ids
 
@@ -88,7 +158,9 @@ class GPT2(nn.Module):
         """
 
         if cache is None:
-            cache = [None] * len(self.blocks)
+            cache_list = [None] * len(self.blocks)
+        else:
+            cache_list = cache.to_cache_list()
 
         _batch_size, seq_len = x.shape
 
@@ -103,9 +175,9 @@ class GPT2(nn.Module):
         # Apply transformer blocks
         for layer_index, block in enumerate(self.blocks):
             x, layer_cache = block(
-                x, layer_cache=cache[layer_index]
+                x, layer_cache=cache_list[layer_index]
             )  # batch, seq, hidden_size
-            cache[layer_index] = layer_cache
+            cache_list[layer_index] = layer_cache
 
         y = self.final_layer_norm(x)  # batch, seq, hidden_size
 
@@ -116,7 +188,9 @@ class GPT2(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        return logits, cache
+        full_cache = full_cache_from_cache_list(cache_list=cache_list)
+
+        return logits, full_cache
 
     def load_pretrained_weights(self):
         """Load weights from OpenAI's pretrained model from HuggingFace."""
