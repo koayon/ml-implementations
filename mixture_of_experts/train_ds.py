@@ -1,6 +1,6 @@
 from datetime import datetime
 from json import load
-from typing import Tuple
+from typing import Optional, Tuple
 
 import deepspeed
 import tiktoken
@@ -17,6 +17,7 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
 
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer
+from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from optimisers.adam import Adam
 from optimisers.sgd import SGD
 from optimisers.sophia import Sophia
@@ -73,10 +74,13 @@ class Trainer:
         self,
         model: nn.Module = SparseMoETransformer(),
         config: MoEConfig = config,
+        max_iters: Optional[int] = None,
     ):
         self.model = model
         self.model_engine = None
         self.config = config
+        if max_iters:
+            self.config.max_iters = max_iters
 
     def get_text_data(
         self,
@@ -98,6 +102,55 @@ class Trainer:
         test_data = full_data[train_split:]
 
         return train_data, test_data  # vectors of ints
+
+    def dataset_to_dataloader(
+        self, dataset: Dataset, random_sampler: bool
+    ) -> DataLoader:
+        """Convert a dataset to a dataloader."""
+        return DataLoader(
+            dataset,
+            sampler=RandomSampler(dataset, replacement=True)
+            if random_sampler
+            else None,
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+
+    def get_tiny_stories_dataloaders(self) -> Tuple[DataLoader, DataLoader]:
+        train_dataset = TinyStoriesDataset(
+            split="train", max_seq_len=self.config.block_size
+        )
+        test_dataset = TinyStoriesDataset(
+            split="test", max_seq_len=self.config.block_size
+        )
+        train_dataloader = self.dataset_to_dataloader(
+            train_dataset, random_sampler=False
+        )
+        test_dataloader = self.dataset_to_dataloader(test_dataset, random_sampler=False)
+
+        # data_iter = iter(train_dataloader)
+        # X, y = next(data_iter)  # lis
+        # print(X.shape)
+        # print(y.shape)
+        return train_dataloader, test_dataloader
+
+    def get_tiny_shakespeare_dataset(self) -> Tuple[DataLoader, DataLoader]:
+        # Get dataset
+        train_data, test_data = self.get_text_data()
+        train_dataset = ShakespeareDataset(
+            train_data, block_size=self.config.block_size
+        )
+        test_dataset = ShakespeareDataset(test_data, block_size=self.config.block_size)
+
+        # Create dataloaders
+
+        train_dataloader = self.dataset_to_dataloader(
+            train_dataset, random_sampler=True
+        )
+        test_dataloader = self.dataset_to_dataloader(test_dataset, random_sampler=True)
+
+        return train_dataloader, test_dataloader
 
     @t.inference_mode()
     def evaluate(self, test_dataloader: DataLoader) -> float:
@@ -137,35 +190,19 @@ class Trainer:
 
         return total_loss / self.config.batch_size
 
-    def train(self) -> nn.Module:
+    def train(self, data_source: str = "tiny_stories") -> nn.Module:
         """Train the model on the data source."""
 
         # Print config and model parameters
         print(f"Config: \n {self.config} \n")
         print(f"Number of parameters: {self.count_parameters}")
 
-        # Get dataset
-        train_data, test_data = self.get_text_data()
-        train_dataset = ShakespeareDataset(
-            train_data, block_size=self.config.block_size
-        )
-        test_dataset = ShakespeareDataset(test_data, block_size=self.config.block_size)
-
-        # Create dataloaders
-        train_dataloader = DataLoader(
-            train_dataset,
-            sampler=RandomSampler(train_dataset, replacement=True),
-            batch_size=self.config.batch_size,
-            shuffle=False,
-            num_workers=6,
-        )
-        test_dataloader = DataLoader(
-            test_dataset,
-            sampler=RandomSampler(test_dataset, replacement=True),
-            batch_size=self.config.batch_size,
-            shuffle=False,
-            num_workers=6,
-        )
+        if data_source == "tiny_stories":
+            train_dataloader, test_dataloader = self.get_tiny_stories_dataloaders()
+        elif data_source == "tiny_shakespeare":
+            train_dataloader, test_dataloader = self.get_tiny_shakespeare_dataset()
+        else:
+            raise ValueError("Invalid data source")
 
         print("Created dataloaders")
 
@@ -181,6 +218,7 @@ class Trainer:
             optimizer=None,
             training_data=None,
             lr_scheduler=None,
+            dist_init_required=True,
         )
 
         # Train the model
@@ -271,11 +309,11 @@ class Trainer:
 
 def main():
     # Set up the trainer
-    trainer = Trainer(model=SparseMoETransformer(), optimiser_string="sgd")
+    trainer = Trainer(model=SparseMoETransformer(), max_iters=1000)
 
     # Train and save the model
     trainer.model = trainer.train()
-    trainer.save_model("sophia_100")
+    trainer.save_model("pytorch_adam_1000")
 
 
 if __name__ == "__main__":

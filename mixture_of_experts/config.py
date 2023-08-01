@@ -1,7 +1,8 @@
 from dataclasses import asdict, dataclass
 
 
-@dataclass(frozen=True)
+# @dataclass(frozen=True)
+@dataclass
 class MoEConfig:
     "Constants used for the MoE model."
 
