@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import tiktoken
 import torch as t
@@ -8,6 +8,9 @@ from einops import rearrange, reduce, repeat
 from jaxtyping import Float, Int
 from rich import print as rprint
 from rich.table import Table
+
+from gpt.cached_attention import AttentionCache
+from gpt.model import FullKeyValueCache
 
 
 class Beams:
@@ -23,6 +26,7 @@ class Beams:
         tokenizer: tiktoken.Encoding,
         logprob_sums: Optional[Float[t.Tensor, "beam"]],
         tokens: Optional[Int[t.Tensor, "beam seq"]],
+        attention_cache: FullKeyValueCache,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -30,21 +34,32 @@ class Beams:
 
         self.logprob_sums = logprob_sums
         self.tokens = tokens
+        self.attention_cache = attention_cache
 
-    def new_beams(self, logprob_sums, tokens) -> "Beams":
+    def new_beams(self, logprob_sums, tokens, attention_cache) -> "Beams":
         """Creates a new Beams object with the same model and tokenizer."""
         return Beams(
             self.model,
             self.tokenizer,
-            logprob_sums,
-            tokens,
+            logprob_sums=logprob_sums,
+            tokens=tokens,
+            attention_cache=attention_cache,
         )
 
     def __getitem__(self, idx) -> "Beams":
         """Allows you to take a slice of the beams object along the batch dimension."""
-        if self.logprob_sums is None or self.tokens is None:
+        if (
+            self.logprob_sums is None
+            or self.tokens is None
+            or self.attention_cache is None
+        ):
             return self
-        return self.new_beams(self.logprob_sums[idx], self.tokens[idx])
+
+        return self.new_beams(
+            logprob_sums=self.logprob_sums[idx],
+            tokens=self.tokens[idx],
+            attention_cache=self.attention_cache[idx],
+        )
 
     def __len__(self) -> int:
         """Returns the number of beams."""
@@ -78,7 +93,12 @@ class Beams:
         beam_num, seq_len = self.tokens.shape
 
         # Forward model for next prediction
-        logits, _cache = self.model(self.tokens)  # beam seq vocab_size
+        logits, cache = self.model(
+            self.tokens, cache=self.attention_cache
+        )  # beam seq vocab_size
+
+        assert cache is not None
+
         next_token_logits = logits[:, -1, :]  # beam vocab_size
 
         # Get log_softmax of next token logits. We use this so they are comparable across beams.
@@ -112,6 +132,16 @@ class Beams:
 
         assert tokens_for_continuations.shape == (beam_num, toks_per_beam, seq_len + 1)
 
+        # Use the new cache
+        # cache list of (layer, (key, value)) tuples which contain (batch, seq, head, head_dim) tensors
+        # We want to get out key of the form (batch, layer * head * head_dim * seq + 1)
+
+        out_attention_cache = repeat(
+            cache,
+            "batch k_and_v layer ... -> (batch toks_per_beam) k_and_v layer ...",
+            toks_per_beam=toks_per_beam,
+        )
+
         # Flatten down to the expected dimensions with num_beam * toks_per_beam being the new batch dim
         out_logprobs = t.flatten(
             logprob_sums_for_continuations, start_dim=0, end_dim=-1
@@ -123,7 +153,11 @@ class Beams:
         assert out_logprobs.shape == (beam_num * toks_per_beam,)
         assert out_tokens.shape == (beam_num * toks_per_beam, seq_len + 1)
 
-        return self.new_beams(logprob_sums=out_logprobs, tokens=out_tokens)
+        return self.new_beams(
+            logprob_sums=out_logprobs,
+            tokens=out_tokens,
+            attention_cache=out_attention_cache,
+        )
 
         # TODO: Implement no_repeat_ngram_size
 
@@ -185,5 +219,5 @@ class Beams:
                     + " ... "
                     + text[-int(0.7 * max_print_chars) :]
                 )
-            table.add_row(f"{logprob_sum:>8.3f}", repr(text))
+            table.add_row(f"{logprob_sum.item():>8.3f}", repr(text))
         rprint(table)
