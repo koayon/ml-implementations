@@ -37,15 +37,21 @@ class MoEFullCache:
         return iter(self._cache_dict)
 
     @property
-    def G(self) -> Dict[str, Float[t.Tensor, "k num_experts"]]:
-        return {idx: cache.G for idx, cache in self._cache_dict.items()}
+    def G(self) -> Float[t.Tensor, "layer k num_experts"]:
+        return t.stack([cache.G for idx, cache in self._cache_dict.items()], dim=0)
 
     @property
-    def token_assignments(self) -> Dict[str, Int[t.Tensor, "k num_experts"]]:
-        return {idx: cache.token_assignments for idx, cache in self._cache_dict.items()}
+    def token_assignments(self) -> Int[t.Tensor, "layer k num_experts"]:
+        return t.stack(
+            [cache.token_assignments for idx, cache in self._cache_dict.items()], dim=0
+        )
 
     @property
     def routing_weights_tensor(self) -> Float[t.Tensor, "layer batch*seq num_experts"]:
         return t.stack(
             [cache.routing_weights for idx, cache in self._cache_dict.items()], dim=0
         )
+
+    @property
+    def layer_indices(self) -> list[str]:
+        return list(self._cache_dict.keys())
