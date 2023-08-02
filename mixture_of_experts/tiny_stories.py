@@ -15,7 +15,13 @@ import requests
 import tiktoken
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler
+from torch.utils.data import (
+    DataLoader,
+    Dataset,
+    IterableDataset,
+    RandomSampler,
+    get_worker_info,
+)
 from tqdm import tqdm
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
@@ -113,7 +119,7 @@ class TinyStoriesDataset(IterableDataset):
 
     def __iter__(self):
         # get worker info within a DataLoader
-        worker_info = torch.utils.data.get_worker_info()
+        worker_info = get_worker_info()
         worker_id = worker_info.id if worker_info else 0
 
         # get DDP rank info
