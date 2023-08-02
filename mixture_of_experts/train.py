@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import tiktoken
 import torch as t
@@ -13,7 +13,10 @@ from tqdm.auto import tqdm
 from transformers.models.switch_transformers.modeling_switch_transformers import (
     router_z_loss_func,
 )
+from typeguard import typechecked
 
+import wandb
+from mixture_of_experts.cache import MoEFullCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
@@ -58,8 +61,10 @@ class ShakespeareDataset(Dataset):
         return self.data[idx * self.block_size : (idx + 1) * self.block_size]
 
 
+# @typechecked
 class Trainer:
-    Optimiser: Optimizer
+    Optimiser: Callable
+    optimiser: Optimizer
 
     def __init__(
         self,
@@ -102,7 +107,7 @@ class Trainer:
         """Convert a dataset to a dataloader."""
         return DataLoader(
             dataset,
-            sampler=RandomSampler(dataset, replacement=True)
+            sampler=RandomSampler(dataset, replacement=True)  #  type: ignore
             if random_sampler
             else None,
             batch_size=self.config.batch_size,
@@ -145,94 +150,17 @@ class Trainer:
 
         return train_dataloader, test_dataloader
 
-    @t.inference_mode()
-    def evaluate(self, test_dataloader: DataLoader) -> float:
-        """Evaluate the model on the test set."""
-
-        total_loss = 0
-        batch_data = next(iter(test_dataloader)).to(device)
-
-        model = self.model.to(device)
-
-        # Predictions are shifted right by one
-        target_tokens = batch_data[:, 1:]  # batch, seq_len - 1
-
-        # Run model to get logits, note that we don't have ground truth for the final prediction
-        logits, cache = model(batch_data)
-
-        # Extract the router logits from the cache and use for router z-loss
-        (G, token_assignments, router_logits) = cache
-        # Router logits is shape bs, num_experts
-        router_logits = rearrange(
-            router_logits, "(bs) e -> b s e", b=self.config.batch_size
-        )
-        router_z_loss = router_z_loss_func(router_logits=router_logits)
-
-        logits = logits[:, :-1, :]  # batch, seq_len - 1, vocab_size
-
-        # Flatten for cross entropy
-        flattened_logits = rearrange(logits, "b s v -> (b s) v")
-        flattened_targets = rearrange(target_tokens, "b s -> (b s)")
-
-        _probs = t.softmax(logits, dim=-1)  # batch, seq_len - 1, vocab_size
-
-        loss = F.cross_entropy(flattened_logits, flattened_targets)
-        total_loss += loss.item()
-
-        return total_loss / self.config.batch_size
-
-    def estimate_loss_tiny_shakespeare(
-        self, sample_batch_num, batch_data, model, optimiser
-    ):
-        batch_data = batch_data.to(device)
-
-        model.train()
-        optimiser.zero_grad()
-
-        # Get targets
-        target_tokens = batch_data[:, 1:]  # batch seq_len - 1
-
-        # Forward pass
-        logits, _cache = model(batch_data)
-        logits = logits[:, :-1, :]  # batch seq_len - 1, vocab_size
-
-        # Flatten for cross entropy
-        flattened_logits = rearrange(logits, "b s v -> (b s) v")  # bs, vocab_size
-        flattened_targets = rearrange(target_tokens, "b s -> (b s)")  # bs
-
-        # Calculate loss and backprop
-        loss = F.cross_entropy(flattened_logits, flattened_targets)
-        loss.backward()
-
-        # Step optimiser
-        optimiser.step()
-        optimiser.zero_grad()
-
-        if (
-            sample_batch_num % self.config.sophia_hessian_update_steps
-            and self.optimiser_string == "sophia"
-        ):
-            # Update Hessian
-
-            # Compute forward pass and sample loss by logits to a sample (regularisation)
-            logits, _cache = model(batch_data)  # batch, seq_len, vocab_size
-
-            flattened_logits: t.Tensor = rearrange(
-                logits, "b s v -> (b s) v"
-            )  # bs, vocab_size
-
-            samp_dist = Categorical(logits=flattened_logits)
-            y_sample = samp_dist.sample()  # bs
-
-            loss_sampled = F.cross_entropy(flattened_logits, y_sample)
-            loss_sampled.backward()
-
-            optimiser.update_hessian()
-            optimiser.zero_grad()
-
     def estimate_loss(
-        self, sample_batch_num, inputs, targets, training: bool, model, optimiser
+        self,
+        sample_batch_num,
+        inputs: t.Tensor,
+        targets: Optional[t.Tensor],
+        training: bool,
+        model: nn.Module,
+        optimiser: Optimizer,
     ):
+        MoE_cache: MoEFullCache
+
         if targets is None:
             x = inputs[:, :-1].to(device)
             y = inputs[:, 1:].to(device)
@@ -243,26 +171,16 @@ class Trainer:
         optimiser.zero_grad()
 
         # Forward pass
-        logits, cache_dict = model(x)
+        # Run model to get logits, note that we don't have ground truth for the final prediction
+        logits, MoE_cache = model(inputs)
 
         # Extract the router logits from the cache and use for router z-loss
-        # router_logits_list = []
-        # for _layer_name, cache in cache_dict.items():
-        #     print(len(cache))
-        #     print(cache)
-        #     print(cache[2].shape)
-        #     (_G, _token_assignments, router_logits) = cache
-        #     router_logits_list.append(router_logits)
+        router_logits = MoE_cache.routing_weights_tensor  # layer, bs, num_experts
 
-        # router_logits = t.stack(router_logits_list, dim=0)  # layer bs, num_experts
-        # # Router logits is shape bs, num_experts
-        # router_logits = rearrange(
-        #     router_logits,
-        #     "layer (bs) e -> b s (layer e)",
-        #     b=self.config.batch_size,
-        #     layer=self.config.num_layers,
-        # )
-        # router_z_loss = router_z_loss_func(router_logits=router_logits)
+        router_logits = rearrange(
+            router_logits, "l (b s) e -> b s (l e)", b=self.config.batch_size
+        )
+        router_z_loss = router_z_loss_func(router_logits=router_logits)
 
         # Flatten for cross entropy
         flattened_logits = rearrange(logits, "b s v -> (b s) v")  # bs, vocab_size
@@ -270,7 +188,7 @@ class Trainer:
 
         # Calculate loss and backprop
         loss = F.cross_entropy(flattened_logits, flattened_targets)
-        # loss += router_z_loss
+        loss += router_z_loss
 
         if training:
             loss.backward()
@@ -298,7 +216,7 @@ class Trainer:
                 loss_sampled = F.cross_entropy(flattened_logits, y_sample)
                 loss_sampled.backward()
 
-                optimiser.update_hessian()
+                optimiser.update_hessian()  # type: ignore
                 optimiser.zero_grad()
 
         return loss.item()
@@ -322,14 +240,21 @@ class Trainer:
         # t.autograd.set_detect_anomaly(True)
 
         model = self.model.to(device)
-        optimiser = self.Optimiser(model.parameters(), lr=self.config.learning_rate)
+        optimiser: Optimizer = self.Optimiser(
+            model.parameters(), lr=self.config.learning_rate
+        )
+        best_loss = float("inf")
+        sample_batch_num = 0
+
+        wandb.init(project="moe")
+        wandb_config = wandb.config
+        wandb.watch(model)
 
         # Train the model
         for epoch in range(self.config.num_epochs):
-            sample_batch_num = 0
-            for batch_data in tqdm(train_dataloader):
+            for batch_data in train_dataloader:
                 if data_source == "tiny_shakespeare":
-                    _loss = self.estimate_loss(
+                    train_loss = self.estimate_loss(
                         sample_batch_num=sample_batch_num,
                         inputs=batch_data,
                         targets=None,
@@ -339,7 +264,7 @@ class Trainer:
                     )
                 elif data_source == "tiny_stories":
                     x, y = batch_data
-                    _loss = self.estimate_loss(
+                    train_loss = self.estimate_loss(
                         sample_batch_num=sample_batch_num,
                         inputs=x,
                         targets=y,
@@ -349,14 +274,23 @@ class Trainer:
                     )
 
                 sample_batch_num += 1
-                print(f"Sample batch num: {sample_batch_num}")
+                if sample_batch_num > self.config.max_iters:
+                    checkpoint = {
+                        "model": model.state_dict(),
+                        # "optimizer": optimiser.state_dict(),
+                        "model_config": self.config,
+                        "iter_num": -1,
+                        "best_val_loss": best_loss,
+                    }
+                    break
+                print(f"\nSample batch num: {sample_batch_num}")
 
                 if sample_batch_num % self.config.eval_steps == 0:
-                    # if True:
+                    # Evaluate model
                     model.eval()
+                    test_loss = 0
+                    num_batches = 0
                     for batch_data in test_dataloader:
-                        test_loss = 0
-                        num_batches = 0
                         if data_source == "tiny_shakespeare":
                             test_loss += self.estimate_loss(
                                 sample_batch_num=sample_batch_num,
@@ -377,32 +311,62 @@ class Trainer:
                                 optimiser=optimiser,
                             )
                         num_batches += 1
+                        # print(f"Num test batches: {num_batches}/5")
+                        if num_batches > 5:
+                            break
                     test_loss /= num_batches
                     print(
                         f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
                     )
+                    # Log to wandb
+                    wandb.log(
+                        {
+                            "iter": sample_batch_num,
+                            "loss/train": train_loss,
+                            "loss/val": test_loss,
+                            "lr": self.config.learning_rate,
+                        }
+                    )
+
+                    # Save checkpoint
+                    if test_loss < best_loss:
+                        best_loss = test_loss
+                        checkpoint = {
+                            "model": model.state_dict(),
+                            # "optimizer": optimiser.state_dict(),
+                            "model_config": self.config,
+                            "iter_num": sample_batch_num,
+                            "best_val_loss": best_loss,
+                        }
+                        self.save_model(
+                            checkpoint=checkpoint,
+                            model_name="moe_checkpoint",
+                        )
 
         return model
 
-    def save_model(self, model_name: str) -> None:
-        """Save the model to the model_dest."""
-
-        if model_name == "":
-            model_name = "moe"
+    def save_model(self, checkpoint: dict, model_name: str = "moe") -> None:
+        """Save the model to the checkpoint."""
 
         # Get the current date
         current_date = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
         full_dest = f"models/{model_name}_{current_date}.pt"
+        t.save(checkpoint, full_dest)
 
-        t.save(self.model.state_dict(), full_dest)
         print(f"Saved model to {full_dest}")
 
-    def load_model(self, model_dest: str) -> None:
-        """Load a model from the model_dest."""
+    def load_model(self, checkpoint_path: str) -> None:
+        """Load a model from the checkpoint."""
 
-        self.model.load_state_dict(t.load(model_dest))
-        print(f"Loaded model from {model_dest}")
+        checkpoint = t.load(checkpoint_path)
+
+        self.model.load_state_dict(checkpoint["model"])
+        self.optimiser
+        print(f"Loaded model from {checkpoint_path}")
+        print(
+            f"Best val loss: {checkpoint['best_val_loss']} for iter {checkpoint['sample_batch_num']}"
+        )
 
     @property
     def count_parameters(self) -> int:
@@ -415,7 +379,6 @@ def main():
 
     # Train and save the model
     trainer.model = trainer.train()
-    trainer.save_model("pytorch_adam_1000")
 
 
 if __name__ == "__main__":
