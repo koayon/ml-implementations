@@ -1,9 +1,10 @@
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from torch import nn
 
 from gpt.cached_attention import UnidirectionalAttention
+from mixture_of_experts.cache import MoELayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.expert_choice_layer import ExpertChoiceFFN
 
@@ -38,7 +39,7 @@ class MoEBlock(nn.Module):
         self.ln1 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
         self.ln2 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
 
-    def forward(self, x: t.Tensor, cache=None):
+    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoELayerCache]:
         """
         x: batch seq hidden_size
 
@@ -51,8 +52,8 @@ class MoEBlock(nn.Module):
 
         x = self.ln2(x)
 
-        y, cache = self.expert_layer(x, cache)
+        y, moe_layer_cache = self.expert_layer(x)
 
         x = x + y
 
-        return x, cache
+        return x, moe_layer_cache
