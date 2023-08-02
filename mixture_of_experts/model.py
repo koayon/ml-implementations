@@ -1,5 +1,6 @@
 import collections
-from typing import Any, Optional, OrderedDict, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, OrderedDict, Protocol, Tuple, TypedDict
 
 import numpy as np
 import plotly.express as px
@@ -7,9 +8,12 @@ import tiktoken
 import torch as t
 from einops import rearrange, repeat
 from fancy_einsum import einsum
+from jaxtyping import Float, Int
+from tensorboardX import SummaryWriter
 from torch import nn
 
 from gpt.transformer_block import GPT2Block
+from mixture_of_experts.cache import MoEFullCache, MoELayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
 
@@ -22,6 +26,7 @@ class SparseMoETransformer(nn.Module):
     transformer_block: nn.Module
     moe_block: nn.Module
     vocab_size: int
+    cache: MoEFullCache
 
     def __init__(
         self,
@@ -55,10 +60,9 @@ class SparseMoETransformer(nn.Module):
         )
         self.sequential_layers = nn.Sequential(self.layers)
         self.final_norm = nn.LayerNorm([config.hidden_size])
+        self.cache = MoEFullCache({})
 
-    def forward(
-        self, x: t.Tensor
-    ) -> Tuple[t.Tensor, Optional[collections.OrderedDict]]:
+    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoEFullCache]:
         """
         x: batch seq_length
         """
@@ -70,11 +74,10 @@ class SparseMoETransformer(nn.Module):
         # Combine token and positional embeddings
         x = self.token_embedding(x) + self.pos_embedding(pos)
 
-        # Initialise cache for routing and use for MoE layers
-        cache: OrderedDict[str, t.Tensor] = collections.OrderedDict()
         for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("moe"):
-                x, cache[idx] = layer(x, cache)
+                x, moe_layer_cache = layer(x)
+                self.cache[idx] = moe_layer_cache
             else:
                 x, _attention_cache = layer(x)
         z = self.final_norm(x)
@@ -84,7 +87,7 @@ class SparseMoETransformer(nn.Module):
             "b s h, v h -> b s v", z, self.token_embedding.weight
         )  # batch seq vocab_size
 
-        return out, cache
+        return out, self.cache
 
     def load_model(self, model_path: str):
         self.load_state_dict(t.load(model_path))
@@ -113,7 +116,7 @@ def sample_next_token(input: str, model: nn.Module) -> str:
     return tokenizer.decode([sampled_token])
 
 
-def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
+def token_path(cache: MoEFullCache, token_num: int) -> dict:
     """
     Given the token path cache, return where a given token was routed to.
     Show the path as a heatmap.
@@ -151,7 +154,9 @@ def token_path(cache: OrderedDict[str, t.Tensor], token_num: int) -> dict:
 
 
 def compare_models(
-    model: nn.Module, new_model_path: str, first_model_path: Optional[str] = None
+    model: SparseMoETransformer,
+    new_model_path: str,
+    first_model_path: Optional[str] = None,
 ):
     PROMPT = "Oh, tempest of the heart, yield not to sorrow's art; for love is but a"
 
@@ -173,11 +178,16 @@ def main():
     model = SparseMoETransformer()
 
     x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
-    y, cache = model(x)  # batch seq vocab_size, Cache dict
-    token_0_path = token_path(cache=cache, token_num=0)
+    y, moe_cache = model(x)  # batch seq vocab_size, Cache dict
+    print("Cache", moe_cache)
+
+    # with SummaryWriter(comment="ModelArchitecture") as w:
+    #     w.add_graph(model, (x,))
+
+    token_0_path = token_path(cache=moe_cache, token_num=0)
     print(token_0_path)
 
-    # compare_models(model, model_path="models/sgd_100_2023-07-28_02:51:31.pt")
+    # compare_models(model, new_model_path="models/sgd_100_2023-07-28_02:51:31.pt")
 
 
 if __name__ == "__main__":
