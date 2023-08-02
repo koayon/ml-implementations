@@ -283,7 +283,9 @@ class Trainer:
                         "best_val_loss": best_loss,
                     }
                     break
-                print(f"\nSample batch num: {sample_batch_num}")
+                print(
+                    f"\n\nSample batch num: {sample_batch_num}/{self.config.max_iters}"
+                )
 
                 if sample_batch_num % self.config.eval_steps == 0:
                     # Evaluate model
