@@ -344,6 +344,7 @@ class Trainer:
                             checkpoint=checkpoint,
                             model_name="moe_checkpoint",
                         )
+                        print(f"New best loss: {best_loss}. Checkpoint saved")
 
         return model
 

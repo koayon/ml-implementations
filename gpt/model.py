@@ -7,6 +7,7 @@ import transformers
 from einops import rearrange
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
+from numpy import isin
 from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
@@ -149,16 +150,18 @@ class GPT2(nn.Module):
             self.load_pretrained_weights()
 
     def forward(
-        self, x: t.Tensor, cache: FullKeyValueCache = None
+        self, x: t.Tensor, cache: Optional[FullKeyValueCache] = None
     ) -> Tuple[t.Tensor, FullKeyValueCache]:
         """
         x: shape (batch, seq), dtype t.int64 - the token ids
 
         Return: shape (batch, seq, vocab_size), dtype t.float32- the output logits
         """
+        layer_cache: AttentionCache
+        cache_list: List[AttentionCache]
 
         if cache is None:
-            cache_list = [None] * len(self.blocks)
+            cache_list = [None] * len(self.blocks)  # type: ignore
         else:
             cache_list = cache.to_cache_list()
 

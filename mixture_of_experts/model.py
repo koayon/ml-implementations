@@ -126,26 +126,26 @@ def token_path(cache: MoEFullCache, token_num: int) -> dict:
     out: dict[str, np.ndarray]
     """
 
-    filtered_cache = {k: v for k, v in cache.items() if k.startswith("moe_layer_")}
+    G = cache.G  # layer, k, num_experts
+    token_assignments = cache.token_assignments  # layer, k, num_experts
+    layer_indices = cache.layer_indices
 
-    out = dict()
+    # Build up array of whether token was routed to each expert on a layer and the routing coefficient
 
-    # Build up dictionary of layer: binary array of whether token was routed to each expert on a layer
-    for layer, (G, token_assignments, _router_logits) in filtered_cache.items():
-        # Get the mask to index the routing matrix
-        bool_token_assignment = token_assignments == token_num  # k, num_experts
+    # Get the mask to index the routing matrix
+    bool_token_assignment = token_assignments == token_num  # layer, k, num_experts
 
-        # Get the routing matrix for the token
-        weighted_token_assignment = G * bool_token_assignment  # k, num_experts
-        out[layer] = weighted_token_assignment.max(dim=0)[0].numpy()  # num_experts
+    # Get the routing matrix for the token
+    weighted_token_assignment = G * bool_token_assignment  # layer, k, num_experts
+    out = weighted_token_assignment.max(dim=1)[0].numpy()  # layer, num_experts
 
-    array = np.array(list(out.values()))  # num_expert_layer, num_experts
+    array = np.array(out)  # num_expert_layer, num_experts
     _num_expert_layers, num_experts = array.shape
 
     fig = px.imshow(
         array,
         x=[f"expert_{i}" for i in range(num_experts)],
-        y=list(out.keys()),
+        y=list(layer_indices),
         title=f"Token {token_num} path",
     )
     fig.show()
