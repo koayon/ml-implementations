@@ -79,7 +79,7 @@ class GPT2Block(nn.Module):
 
 if __name__ == "__main__":
     # Test GPT2Block
-    block = GPT2Block()
+    block = GPT2Block(layer_index=0)
     x = t.rand(2, 10, 768)
     y = block(x)
     print(y.shape)

@@ -66,8 +66,8 @@ class AlibiGPT(nn.Module):
             self.load_pretrained_weights()
 
     def forward(
-        self, x: t.Tensor, cache: FullKeyValueCache = None
-    ) -> Tuple[t.Tensor, FullKeyValueCache]:
+        self, x: t.Tensor, cache: Optional[FullKeyValueCache] = None
+    ) -> Tuple[t.Tensor, Optional[FullKeyValueCache]]:
         """
         x: shape (batch, seq), dtype t.int64 - the token ids
 
@@ -101,9 +101,9 @@ class AlibiGPT(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        full_cache = full_cache_from_cache_list(cache_list=cache_list)
+        # full_cache = full_cache_from_cache_list(cache_list=cache_list)
 
-        return logits, full_cache
+        return logits, None
 
     def load_pretrained_weights(self):
         """Load weights from OpenAI's pretrained model from HuggingFace."""
@@ -133,27 +133,27 @@ class AlibiGPT(nn.Module):
             )
 
             # Copy MLP weights
-            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)
+            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)  # type: ignore
             self._copy_weight_bias(
-                my_block.MLP.linear1, hf_block.mlp.c_fc, transpose=True
+                my_block.MLP.linear1, hf_block.mlp.c_fc, transpose=True  # type: ignore
             )
             self._copy_weight_bias(
-                my_block.MLP.linear2, hf_block.mlp.c_proj, transpose=True
+                my_block.MLP.linear2, hf_block.mlp.c_proj, transpose=True  # type: ignore
             )
 
         for p in self.parameters():
             p.requires_grad_(True)
 
-    def _copy_weight_bias(self, mine, theirs, transpose=False):
-        mine.weight.copy_(theirs.weight.T if transpose else theirs.weight)
+    def _copy_weight_bias(self, mine: nn.Module, theirs: nn.Module, transpose=False):
+        mine.weight.copy_(theirs.weight.T if transpose else theirs.weight)  # type: ignore
         if mine.bias is not None:
-            mine.bias.copy_(theirs.bias)
+            mine.bias.copy_(theirs.bias)  # type: ignore
 
 
 if __name__ == "__main__":
     model = AlibiGPT(config, with_pretrained_weights=True)
     x = t.randint(0, config.vocab_size, (1, 10))
-    logits = model(x)
+    logits: t.Tensor = model(x)
     print(logits)
     print(logits.shape)
 

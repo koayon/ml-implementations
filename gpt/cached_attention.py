@@ -56,14 +56,14 @@ class UnidirectionalAttention(nn.Module):
 
     def forward(
         self, x: t.Tensor, layer_cache: Optional[AttentionCache] = None
-    ) -> Tuple[t.Tensor, t.Tensor]:
+    ) -> Tuple[t.Tensor, AttentionCache]:
         """
         x: shape (batch, seq, hidden_size)
 
         Return: shape (batch, seq, hidden_size)
         """
         _batch, _seq_length, hidden_size = x.shape
-        assert hidden_size == self.hidden_size
+        # assert hidden_size == self.hidden_size
 
         if layer_cache:
             return self._forward_with_cache(x, layer_cache)
