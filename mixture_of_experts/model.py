@@ -11,6 +11,7 @@ from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from tensorboardX import SummaryWriter
 from torch import nn
+from torch.distributions.categorical import Categorical
 
 from gpt.transformer_block import GPT2Block
 from mixture_of_experts.cache import MoEFullCache, MoELayerCache
@@ -107,10 +108,12 @@ def sample_next_token(input: str, model: nn.Module) -> str:
     # Here we're looking at the next token for the first batch
     logits = all_logits[0, -1, :]  # vocab_size
 
+    # print(t.sort(logits, descending=True))
+
     # Sample from logits (basic categorical sampling)
-    sampled_token = (
-        t.distributions.categorical.Categorical(logits=logits).sample().item()
-    )
+    dist = Categorical(logits=logits)
+    sampled_token = dist.sample().item()
+
     assert isinstance(sampled_token, int)
 
     return tokenizer.decode([sampled_token])

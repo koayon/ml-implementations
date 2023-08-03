@@ -36,9 +36,10 @@ class SGD(Optimizer):
             for i, p in enumerate(self.params):
                 # Ordinarily weight decay could be applied as the l2_norm on the weights e.g.
                 # final_loss = loss + weight_decay * l2_norm(all_weights)
-                # where l2_norm(w) = sum(w**2)
+                # where l2_norm(p) = sum(p**2)
 
-                # Putting this inside the gradient, we differentiate and (up to constant 1/2 factor) get
+                # Putting this inside the gradient, we differentiate and (up to constant 1/2 factor) get p_i
+
                 assert p.grad is not None
 
                 g = p.grad + self.weight_decay * p  # note that p param_group here
@@ -48,4 +49,4 @@ class SGD(Optimizer):
                 g = self.b[i]
 
                 # Note that we update the params in_place using p -= foo  rather than creating a new reference with p = p - foo
-                p -= self.lr * g  # type: ignore
+                p -= self.lr * g

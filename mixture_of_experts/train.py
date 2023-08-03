@@ -18,7 +18,7 @@ from typeguard import typechecked
 import wandb
 from mixture_of_experts.cache import MoEFullCache
 from mixture_of_experts.config import MoEConfig
-from mixture_of_experts.model import SparseMoETransformer
+from mixture_of_experts.model import SparseMoETransformer, sample_next_token
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from optimisers.adam import Adam
 from optimisers.sgd import SGD
@@ -282,6 +282,10 @@ class Trainer:
                         "iter_num": -1,
                         "best_val_loss": best_loss,
                     }
+                    self.save_model(
+                        checkpoint=checkpoint,
+                        model_name="moe_post_training",
+                    )
                     break
                 print(
                     f"\n\nSample batch num: {sample_batch_num}/{self.config.max_iters}"
@@ -352,24 +356,25 @@ class Trainer:
         """Save the model to the checkpoint."""
 
         # Get the current date
-        current_date = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+        current_date = datetime.now().strftime("%Y-%m-%d")
 
         full_dest = f"models/{model_name}_{current_date}.pt"
         t.save(checkpoint, full_dest)
 
         print(f"Saved model to {full_dest}")
 
-    def load_model(self, checkpoint_path: str) -> None:
+    def load_model(self, checkpoint_path: str) -> nn.Module:
         """Load a model from the checkpoint."""
 
         checkpoint = t.load(checkpoint_path)
 
         self.model.load_state_dict(checkpoint["model"])
-        self.optimiser
+
         print(f"Loaded model from {checkpoint_path}")
         print(
-            f"Best val loss: {checkpoint['best_val_loss']} for iter {checkpoint['sample_batch_num']}"
+            f"Best val loss: {checkpoint['best_val_loss']} for iter {checkpoint['iter_num']}"
         )
+        return self.model
 
     @property
     def count_parameters(self) -> int:
@@ -381,7 +386,18 @@ def main():
     trainer = Trainer(model=SparseMoETransformer(), max_iters=1000)
 
     # Train and save the model
-    trainer.model = trainer.train()
+    # trainer.model = trainer.train()
+
+    print(trainer.count_parameters)
+
+    # Load model
+    # model = trainer.load_model("models/moe_checkpoint_2023-08-03_00:42:23.pt")
+
+    # next_token = sample_next_token(
+    #     input="One day, I went to meet my friend Jill. She has brown hair and",
+    #     model=model,
+    # )
+    # print(next_token)
 
 
 if __name__ == "__main__":
