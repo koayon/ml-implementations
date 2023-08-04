@@ -130,12 +130,16 @@ class TransformerSampler:
         input_tokens: batch, seq
         Returns: batch
         """
+
         # Forward pass tokens
         with t.inference_mode():
             with t.no_grad():
                 all_logits, cache = self.model(
                     input_tokens, cache
                 )  # batch seq vocab_size
+
+        if cache is None:
+            cache = []
 
         # Here we're looking at the next token for the first batch
         logits: t.Tensor = all_logits[:, -1, :]  # batch vocab_size
@@ -154,7 +158,7 @@ class TransformerSampler:
                 sampled_tokens = self._sample_with_temp(
                     top_logits, temperature=temperature
                 )  # batch
-                return sampled_tokens
+                return sampled_tokens, cache
 
         if top_p:
             top_logits, list_set_top_p_indices = self._logits_to_top_p(
@@ -165,7 +169,7 @@ class TransformerSampler:
                 sampled_tokens = self._sample_with_temp(
                     top_logits, temperature=temperature
                 )  # batch
-                return sampled_tokens
+                return sampled_tokens, cache
 
         if top_k and top_p:
             # Get the intersection of the top k and top p indices
@@ -179,7 +183,7 @@ class TransformerSampler:
                 temperature=temperature,
             )
 
-            return sampled_tokens
+            return sampled_tokens, cache
 
         # If no top_p or top_k, sample from logits (basic categorical sampling)
         sampled_tokens = self._sample_with_temp(
@@ -240,7 +244,7 @@ class TransformerSampler:
         self,
         prompt: str,
         max_new_tokens: int,
-        num_return_sequences: int = None,
+        num_return_sequences: Optional[int] = None,
         num_beams: int = 4,
         no_repeat_ngram_size: int = 0,
     ) -> str:

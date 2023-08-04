@@ -25,7 +25,7 @@ class Beams:
         tokenizer: tiktoken.Encoding,
         logprob_sums: Optional[Float[t.Tensor, "beam"]],
         tokens: Optional[Int[t.Tensor, "beam seq"]],
-        attention_cache: FullKeyValueCache = None,
+        attention_cache: Optional[FullKeyValueCache] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer

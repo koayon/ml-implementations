@@ -20,38 +20,26 @@ class MoELayerCache:
 
 
 # @typechecked
-class MoEFullCache:
+class MoEFullCache(Dict[str, MoELayerCache]):
     def __init__(self, moe_cache_dict: Dict[str, MoELayerCache]):
-        self._cache_dict = moe_cache_dict
+        super().__init__(moe_cache_dict)
 
-    def __len__(self):
-        return len(self._cache_dict)
-
-    def __getitem__(self, idx):
-        return self._cache_dict[idx]
-
-    def __setitem__(self, idx, value):
-        self._cache_dict[idx] = value
-
-    def __iter__(self):
-        return iter(self._cache_dict)
+    def __setitem__(self, idx: str, cache: MoELayerCache) -> None:
+        assert isinstance(cache, MoELayerCache)
+        return super().__setitem__(idx, cache)
 
     @property
     def G(self) -> Float[t.Tensor, "layer k num_experts"]:
-        return t.stack([cache.G for idx, cache in self._cache_dict.items()], dim=0)
+        return t.stack([cache.G for idx, cache in self.items()], dim=0)
 
     @property
     def token_assignments(self) -> Int[t.Tensor, "layer k num_experts"]:
-        return t.stack(
-            [cache.token_assignments for idx, cache in self._cache_dict.items()], dim=0
-        )
+        return t.stack([cache.token_assignments for idx, cache in self.items()], dim=0)
 
     @property
     def routing_weights_tensor(self) -> Float[t.Tensor, "layer batch*seq num_experts"]:
-        return t.stack(
-            [cache.routing_weights for idx, cache in self._cache_dict.items()], dim=0
-        )
+        return t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
 
     @property
     def layer_indices(self) -> list[str]:
-        return list(self._cache_dict.keys())
+        return list(self.keys())
