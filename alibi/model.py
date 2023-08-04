@@ -13,7 +13,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
 from alibi.transformer_block import GPT2Block
-from gpt.model import FullKeyValueCache, GPTConfig, full_cache_from_cache_list
+from gpt.model import FullKeyValueCache, GPTConfig
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -35,7 +35,7 @@ class AlibiGPT(nn.Module):
     final_layer_norm: nn.LayerNorm
     blocks: nn.ModuleList  # of GPT2Block
 
-    def __init__(self, config: GPTConfig = config, with_pretrained_weights=True):
+    def __init__(self, config: GPTConfig = config):
         super().__init__()
 
         self.config = config
@@ -61,9 +61,6 @@ class AlibiGPT(nn.Module):
         self.final_layer_norm = nn.LayerNorm(
             config.hidden_size, eps=config.layer_norm_epsilon
         )
-
-        if with_pretrained_weights:
-            self.load_pretrained_weights()
 
     def forward(
         self, x: t.Tensor, cache: Optional[FullKeyValueCache] = None
@@ -105,55 +102,11 @@ class AlibiGPT(nn.Module):
 
         return logits, None
 
-    def load_pretrained_weights(self):
-        """Load weights from OpenAI's pretrained model from HuggingFace."""
-
-        hf_gpt = helpers.load_pretrained_gpt()
-        for param in self.parameters():
-            param.requires_grad_(False)
-
-        # Embeddings (note the copy_ ensures that weights are copied in_place)
-        self.token_embedding.weight.copy_(hf_gpt.transformer.wte.weight)
-        self.pos_embedding.weight.copy_(hf_gpt.transformer.wpe.weight)
-        self._copy_weight_bias(self.final_layer_norm, hf_gpt.transformer.ln_f)
-
-        for my_block, hf_block in zip(self.blocks, hf_gpt.transformer.h):
-            assert isinstance(hf_block, HFGPT2Block)
-            assert isinstance(my_block, GPT2Block)
-
-            # Copy attention weights
-            self._copy_weight_bias(my_block.ln1, hf_block.ln_1)
-            self._copy_weight_bias(
-                my_block.attn.qkv_proj, hf_block.attn.c_attn, transpose=True
-            )
-            self._copy_weight_bias(
-                my_block.attn.output_proj,
-                hf_block.attn.c_proj,
-                transpose=True,
-            )
-
-            # Copy MLP weights
-            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)  # type: ignore
-            self._copy_weight_bias(
-                my_block.MLP.linear1, hf_block.mlp.c_fc, transpose=True  # type: ignore
-            )
-            self._copy_weight_bias(
-                my_block.MLP.linear2, hf_block.mlp.c_proj, transpose=True  # type: ignore
-            )
-
-        for p in self.parameters():
-            p.requires_grad_(True)
-
-    def _copy_weight_bias(self, mine: nn.Module, theirs: nn.Module, transpose=False):
-        mine.weight.copy_(theirs.weight.T if transpose else theirs.weight)  # type: ignore
-        if mine.bias is not None:
-            mine.bias.copy_(theirs.bias)  # type: ignore
-
 
 if __name__ == "__main__":
-    model = AlibiGPT(config, with_pretrained_weights=True)
+    model = AlibiGPT(config)
     x = t.randint(0, config.vocab_size, (1, 10))
-    logits: t.Tensor = model(x)
+    logits, _cache = model(x)
     print(logits)
     print(logits.shape)
 
