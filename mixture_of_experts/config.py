@@ -37,7 +37,7 @@ class MoEConfig:
     sophia_hessian_update_steps: int = 10
     eval_steps: int = 10
 
-    def __str__(self):
+    def __str__(self) -> str:
         out = "MoEConfig:\n\n"
         out += "\n".join(f"{k}={str(v)}" for k, v in asdict(self).items())
         return out
