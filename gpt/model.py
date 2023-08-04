@@ -37,57 +37,45 @@ class GPTConfig:
 
 config = GPTConfig()
 
-FullKeyValueCacheTensor = Float[t.Tensor, "batch 2 layer seq dim"]
-
-
-def full_cache_from_cache_list(cache_list: List[AttentionCache]):
-    key_layer_caches = t.stack(
-        [layer_cache.k for layer_cache in cache_list]
-    )  # (layer, batch, head, seq, dim)
-    value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
-
-    key_layer_caches = rearrange(
-        key_layer_caches,
-        "layer batch seq dim-> batch layer seq dim",
-    )
-    value_layer_caches = rearrange(
-        value_layer_caches,
-        "layer batch seq dim-> batch layer seq dim",
-    )
-
-    print("key_layer_caches.shape", key_layer_caches.shape)
-
-    full_tensor = t.stack(
-        [key_layer_caches, value_layer_caches], dim=1
-    )  # (batch, 2, layer, seq, dim)
-    return FullKeyValueCache(full_tensor)
+FullKeyValueCacheTensor = Float[t.Tensor, "layer 2 batch seq dim"]
 
 
 class FullKeyValueCache(t.Tensor):
     """
     This class holds tensors of key and value vectors, to be used for caching.
+
+    layer 2 batch seq dim
     """
 
-    def to_cache_list(self):
-        key_layer_caches = self[:, 0]
-        value_layer_caches = self[:, 1]
+    def __init__(self, cache_list: List[AttentionCache]):
+        """Turn a list of AttentionCaches into a single tensor."""
+        key_layer_caches = t.stack(
+            [layer_cache.k for layer_cache in cache_list]
+        )  # (layer, batch, seq, dim)
+        value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
 
-        key_layer_caches = rearrange(
-            key_layer_caches,
-            "batch layer seq dim-> layer batch seq dim",
-        )
-        value_layer_caches = rearrange(
-            value_layer_caches,
-            "batch layer seq dim-> layer batch seq dim",
-        )
+        # print("key_layer_caches.shape", key_layer_caches.shape)
 
-        attn_cache = []
+        full_tensor = t.stack(
+            [key_layer_caches, value_layer_caches], dim=1
+        )  # (layer, 2, batch, seq, dim)
+        super().__init__(full_tensor)
+
+    def to_cache_list(self) -> List[AttentionCache]:
+        """Turns the Full Key Value Cache back into a list of AttentionCaches.
+        Input shape: (layer, 2, batch, seq, dim)
+
+        """
+        key_layer_caches = self[:, 0]  # layer, batch, seq, dim
+        value_layer_caches = self[:, 1]  # layer, batch, seq, dim
+
+        attn_caches = []
         for key_layer_cache, value_layer_cache in zip(
             key_layer_caches, value_layer_caches
         ):
-            attn_cache.append(AttentionCache(k=key_layer_cache, v=value_layer_cache))
+            attn_caches.append(AttentionCache(k=key_layer_cache, v=value_layer_cache))
 
-        return attn_cache  # list of AttentionCaches
+        return attn_caches  # list of AttentionCaches
 
     @property
     def k(self) -> t.Tensor:
@@ -191,7 +179,7 @@ class GPT2(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        full_cache = full_cache_from_cache_list(cache_list=cache_list)
+        full_cache = FullKeyValueCache(cache_list=cache_list)
 
         return logits, full_cache
 
@@ -243,7 +231,7 @@ class GPT2(nn.Module):
 if __name__ == "__main__":
     model = GPT2(config, with_pretrained_weights=True)
     x = t.randint(0, config.vocab_size, (1, 10))
-    logits = model(x)
+    logits, _cache = model(x)
     print(logits)
     print(logits.shape)
 
