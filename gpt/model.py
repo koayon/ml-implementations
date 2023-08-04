@@ -47,27 +47,13 @@ class FullKeyValueCache(t.Tensor):
     layer 2 batch seq dim
     """
 
-    def __init__(self, cache_list: List[AttentionCache]):
-        """Turn a list of AttentionCaches into a single tensor."""
-        key_layer_caches = t.stack(
-            [layer_cache.k for layer_cache in cache_list]
-        )  # (layer, batch, seq, dim)
-        value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
-
-        # print("key_layer_caches.shape", key_layer_caches.shape)
-
-        full_tensor = t.stack(
-            [key_layer_caches, value_layer_caches], dim=1
-        )  # (layer, 2, batch, seq, dim)
-        super().__init__(full_tensor)
-
     def to_cache_list(self) -> List[AttentionCache]:
         """Turns the Full Key Value Cache back into a list of AttentionCaches.
         Input shape: (layer, 2, batch, seq, dim)
 
         """
-        key_layer_caches = self[:, 0]  # layer, batch, seq, dim
-        value_layer_caches = self[:, 1]  # layer, batch, seq, dim
+        key_layer_caches = self.data[:, 0]  # layer, batch, seq, dim
+        value_layer_caches = self.data[:, 1]  # layer, batch, seq, dim
 
         attn_caches = []
         for key_layer_cache, value_layer_cache in zip(
@@ -79,19 +65,31 @@ class FullKeyValueCache(t.Tensor):
 
     @property
     def k(self) -> t.Tensor:
-        return self[:, 0]
+        return self.data[:, 0]
 
     @property
     def v(self) -> t.Tensor:
-        return self[:, 1]
+        return self.data[:, 1]
 
     @property
     def batch(self) -> int:
-        return self.shape[2]
+        return self.data.shape[2]
 
     @property
     def seq_len(self) -> int:
-        return self.shape[3]
+        return self.data.shape[3]
+
+
+def full_kv_cache_from(cache_list: List[AttentionCache]) -> FullKeyValueCache:
+    key_layer_caches = t.stack(
+        [layer_cache.k for layer_cache in cache_list]
+    )  # (layer, batch, head, seq, dim)
+    value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
+
+    full_tensor = t.stack(
+        [key_layer_caches, value_layer_caches], dim=1
+    )  # (batch, 2, layer, seq, dim)
+    return FullKeyValueCache(full_tensor)
 
 
 class GPT2(nn.Module):
@@ -179,7 +177,7 @@ class GPT2(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        full_cache = FullKeyValueCache(cache_list=cache_list)
+        full_cache = full_kv_cache_from(cache_list=cache_list)
 
         return logits, full_cache
 
@@ -239,3 +237,10 @@ if __name__ == "__main__":
 
     with SummaryWriter(comment="ModelArchitecture") as w:
         w.add_graph(model, (x,))
+
+    # k = t.randn(1, 10, 10)
+    # v = t.randn(1, 10, 10)
+    # cache = AttentionCache(k, v)
+
+    # a = FullKeyValueCache(cache_list=[cache] * 3)
+    # assert isinstance(a, FullKeyValueCache)
