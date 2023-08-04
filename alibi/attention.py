@@ -43,8 +43,6 @@ class AlibiUnidirectionalAttention(nn.Module):
             (self.num_heads * self.head_size), hidden_size
         )  # W_O
 
-        self.attn_scale = 1.0 / math.sqrt(self.head_size)
-
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
@@ -112,9 +110,8 @@ class AlibiUnidirectionalAttention(nn.Module):
 
         # Combine q and k to get attention scores
         q_k = t.einsum("bnih,bnjh->bnij", q, k)  # batch, num_heads, seq, seq
-        q_k *= self.attn_scale
 
-        # Apply mask
+        # Apply mask (note we don't scale by sqrt(d_k) as normal with ALiBi)
         mask = self.get_alibi_mask(seq_length).to(x.device)  # 1 num_heads seq seq
 
         masked_attention_scores = q_k + mask
