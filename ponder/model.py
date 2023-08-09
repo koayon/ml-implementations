@@ -153,7 +153,9 @@ class PonderNet(nn.Module):
             )  #
             intermediate_pred.append(current_pred)
 
-            if not self.training:
+            if self.training:
+                pass
+            else:
                 dist = Categorical(probs=[conditional_prob, 1 - conditional_prob])
                 # If stopping at this node
                 if dist.sample() == 0:
