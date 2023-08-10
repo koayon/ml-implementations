@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import torch as t
 from einops import rearrange, repeat
@@ -54,7 +54,9 @@ class GroupedQueryAttention(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
-    def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
+    def forward(
+        self, x: t.Tensor, layer_cache: Optional[Any] = None
+    ) -> Tuple[t.Tensor, None]:
         """
         x: shape (batch, seq, hidden_size)
 
@@ -114,7 +116,7 @@ class GroupedQueryAttention(nn.Module):
         out = self.output_proj(combined_with_v)  # batch, seq, hidden_size
         out = self.resid_dropout(out)
 
-        return out
+        return out, None
 
 
 if __name__ == "__main__":

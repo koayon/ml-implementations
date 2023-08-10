@@ -7,7 +7,6 @@ import transformers
 from einops import rearrange
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
-from numpy import isin
 from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
@@ -68,6 +67,9 @@ class FullKeyValueCache(t.Tensor):
 
 
 def full_kv_cache_from(cache_list: List[AttentionCache]) -> FullKeyValueCache:
+    if cache_list[0] is None:
+        return FullKeyValueCache([])
+
     key_layer_caches = t.stack(
         [layer_cache.k for layer_cache in cache_list]
     )  # (layer, batch, head, seq, dim)
@@ -214,16 +216,17 @@ class GPT2(nn.Module):
 
 
 if __name__ == "__main__":
-    model = GPT2(config, with_pretrained_weights=True)
+    model = GPT2(config, with_pretrained_weights=False)
     x = t.randint(0, config.vocab_size, (1, 10))
     logits, _cache = model(x)
+
     print(logits)
     print(logits.shape)
 
-    print(model.config)
+    # print(model.config)
 
-    with SummaryWriter(comment="ModelArchitecture") as w:
-        w.add_graph(model, (x,))
+    # with SummaryWriter(comment="ModelArchitecture") as w:
+    #     w.add_graph(model, (x,))
 
     # k = t.randn(1, 10, 10)
     # v = t.randn(1, 10, 10)

@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Union
 
 import torch as t
 import transformers
@@ -9,6 +9,7 @@ from torch import nn
 from transformers.activations import NewGELUActivation
 
 from gpt.cached_attention import AttentionCache, UnidirectionalAttention
+from gpt.group_query_attention import GroupedQueryAttention
 
 ACTIVATION_FUNCTIONS = dict(
     relu=nn.ReLU(),
@@ -23,7 +24,7 @@ class GPT2Block(nn.Module):
     Based on OpenAI's GPT-2 implementation.
     """
 
-    attn: UnidirectionalAttention
+    attn: UnidirectionalAttention | GroupedQueryAttention
     linear1: nn.Linear
     linear2: nn.Linear
     ln1: nn.LayerNorm
@@ -45,7 +46,10 @@ class GPT2Block(nn.Module):
         # Attention part
 
         self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-        self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
+        # self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
+        self.attn = GroupedQueryAttention(
+            hidden_size=hidden_size, num_heads=num_heads, dropout=dropout, num_groups=4
+        )
 
         # MLP part
 
@@ -83,6 +87,6 @@ if __name__ == "__main__":
     # Test GPT2Block
     block = GPT2Block(layer_index=0)
     x = t.rand(2, 10, 768)
-    y = block(x)
+    y: t.Tensor = block(x)
     print(y.shape)
     print(y)
