@@ -14,25 +14,12 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
 from gpt.cached_attention import AttentionCache
+from gpt.config import GPTConfig
 from gpt.transformer_block import GPT2Block
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
 device = "cuda" if t.cuda.is_available() else "cpu"
-
-
-@dataclass(frozen=True)
-class GPTConfig:
-    """Constants used throughout the GPT2 model."""
-
-    activation_function: str = "new_gelu"
-    num_layers: int = 12
-    num_heads: int = 12
-    vocab_size: int = 50257
-    hidden_size: int = 768
-    max_position_embeddings: int = 1024
-    dropout: float = 0.1
-    layer_norm_epsilon: float = 1e-5
 
 
 config = GPTConfig()

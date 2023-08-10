@@ -11,7 +11,8 @@ from tqdm.auto import tqdm
 
 from gpt.beams import Beams
 from gpt.cached_attention import AttentionCache
-from gpt.model import GPT2, GPTConfig
+from gpt.config import GPTConfig
+from gpt.model import GPT2
 
 
 class TransformerSampler:

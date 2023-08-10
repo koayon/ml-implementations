@@ -13,7 +13,8 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
 from alibi.transformer_block import GPT2Block
-from gpt.model import FullKeyValueCache, GPTConfig
+from gpt.config import GPTConfig
+from gpt.model import FullKeyValueCache
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
