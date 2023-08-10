@@ -38,6 +38,7 @@ class GPT2Block(nn.Module):
         dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
         activation_function: str = "new_gelu",
+        group_size: int = 0,
     ):
         super().__init__()
 
@@ -46,10 +47,15 @@ class GPT2Block(nn.Module):
         # Attention part
 
         self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-        # self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
-        self.attn = GroupedQueryAttention(
-            hidden_size=hidden_size, num_heads=num_heads, dropout=dropout, num_groups=4
-        )
+        if group_size > 0:
+            self.attn = GroupedQueryAttention(
+                hidden_size=hidden_size,
+                num_heads=num_heads,
+                dropout=dropout,
+                num_groups=4,
+            )
+        else:
+            self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
 
         # MLP part
 

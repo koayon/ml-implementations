@@ -16,7 +16,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 import helpers
 from gpt.cached_attention import AttentionCache
 from gpt.config import GPTConfig
-from gpt.model import FullKeyValueCache, FullKeyValueCacheTensor, full_kv_cache_from
+from gpt.model import FullKeyValueCache, full_kv_cache_from
 from gpt.transformer_block import GPT2Block
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
