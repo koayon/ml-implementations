@@ -15,12 +15,8 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 import helpers
 from gpt.cached_attention import AttentionCache
-from gpt.model import (
-    FullKeyValueCache,
-    FullKeyValueCacheTensor,
-    GPTConfig,
-    full_kv_cache_from,
-)
+from gpt.config import GPTConfig
+from gpt.model import FullKeyValueCache, FullKeyValueCacheTensor, full_kv_cache_from
 from gpt.transformer_block import GPT2Block
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
@@ -29,6 +25,12 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 
 config = GPTConfig()
+
+
+@dataclass
+class PonderCache:
+    lambda_vals: t.Tensor  # num_layers
+    intermediate_vals: t.Tensor  # list of num_layers tensors of shape (batch, seq, hidden_size)
 
 
 class PonderNet(nn.Module):
@@ -102,7 +104,7 @@ class PonderNet(nn.Module):
 
     def forward(
         self, x: t.Tensor, cache: Optional[FullKeyValueCache] = None
-    ) -> Tuple[t.Tensor, FullKeyValueCache, list[float], list[t.Tensor]]:
+    ) -> Tuple[t.Tensor, FullKeyValueCache, PonderCache]:
         """
         Args:
             x: shape (batch, seq), dtype t.int64 - the token ids
@@ -132,7 +134,7 @@ class PonderNet(nn.Module):
         x = tokens + positions
         x = self.dropout(x)  # batch, seq, hidden_size
 
-        lambda_vals: list[float] = []
+        lambda_vals: list[t.Tensor] = []
         intermediate_pred: list[t.Tensor] = []
 
         # Apply transformer blocks
@@ -150,7 +152,7 @@ class PonderNet(nn.Module):
                 "hidden_size vocab_size, batch seq hidden_size -> batch seq vocab_size",
                 self.unembedding,
                 self.intermediate_layer_norm(x),
-            )  #
+            )  # batch seq vocab_size
             intermediate_pred.append(current_pred)
 
             if self.training:
@@ -173,7 +175,12 @@ class PonderNet(nn.Module):
 
         full_cache = full_kv_cache_from(cache_list=cache_list)
 
-        return logits, full_cache, lambda_vals, intermediate_pred
+        ponder_cache = PonderCache(
+            intermediate_vals=t.stack(intermediate_pred),
+            lambda_vals=t.stack(lambda_vals),
+        )
+
+        return logits, full_cache, ponder_cache
 
     def load_pretrained_weights(self):
         """Load weights from OpenAI's pretrained model from HuggingFace."""
