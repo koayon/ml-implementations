@@ -11,10 +11,10 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
-import helpers
 from gpt.cached_attention import AttentionCache
 from gpt.config import GPTConfig
 from gpt.transformer_block import GPT2Block
+from helpers import check_leaf_nodes, load_pretrained_gpt
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -173,7 +173,7 @@ class GPT2(nn.Module):
     def load_pretrained_weights(self):
         """Load weights from OpenAI's pretrained model from HuggingFace."""
 
-        hf_gpt = helpers.load_pretrained_gpt()
+        hf_gpt = load_pretrained_gpt()
         for param in self.parameters():
             param.requires_grad_(False)
 
@@ -217,11 +217,13 @@ class GPT2(nn.Module):
 
 if __name__ == "__main__":
     model = GPT2(config, with_pretrained_weights=False)
-    x = t.randint(0, config.vocab_size, (1, 10))
-    logits, _cache = model(x)
+    print(check_leaf_nodes(model))
 
-    print(logits)
-    print(logits.shape)
+    # x = t.randint(0, config.vocab_size, (1, 10))
+    # logits, _cache = model(x)
+
+    # print(logits)
+    # print(logits.shape)
 
     # print(model.config)
 

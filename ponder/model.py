@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Tuple
 
 import tiktoken
 import torch as t
+import torch.nn.functional as F
 import transformers
 from einops import rearrange
 from fancy_einsum import einsum
@@ -29,8 +30,8 @@ config = GPTConfig()
 
 @dataclass
 class PonderCache:
-    lambda_vals: t.Tensor  # num_layers
-    intermediate_vals: t.Tensor  # list of num_layers tensors of shape (batch, seq, hidden_size)
+    lambda_vals: t.Tensor  # num_layers batch seq
+    intermediate_vals: t.Tensor  # num_layers, batch, seq, hidden_size
 
 
 class PonderNet(nn.Module):
@@ -48,7 +49,6 @@ class PonderNet(nn.Module):
     def __init__(
         self,
         config: GPTConfig = config,
-        with_pretrained_weights=True,
         training: bool = True,
     ):
         super().__init__()
@@ -88,7 +88,7 @@ class PonderNet(nn.Module):
         self.probs_proj = nn.ModuleList(
             [
                 nn.Linear(in_features=config.hidden_size, out_features=1, device=device)
-                for index in range(config.num_layers)
+                for _ in range(config.num_layers)
             ]
         )
 
@@ -96,9 +96,6 @@ class PonderNet(nn.Module):
             self.token_embedding.weight.T
         )  # pseudo-inverse of Embedding matrix which is used as the unembed.
         # Note: in the general case we could also have W_y_i as a learned matrix.
-
-        if with_pretrained_weights:
-            self.load_pretrained_weights()
 
         self.training = training
 
@@ -134,8 +131,17 @@ class PonderNet(nn.Module):
         x = tokens + positions
         x = self.dropout(x)  # batch, seq, hidden_size
 
-        lambda_vals: list[t.Tensor] = []
-        intermediate_pred: list[t.Tensor] = []
+        lambda_vals = t.zeros(
+            size=(self.config.num_layers, self.config.batch_size, seq_len)
+        )
+        intermediate_pred = t.zeros(
+            size=(
+                self.config.num_layers,
+                self.config.batch_size,
+                seq_len,
+                self.config.vocab_size,
+            ),
+        )
 
         # Apply transformer blocks
         for layer_index, block in enumerate(self.blocks):
@@ -145,15 +151,24 @@ class PonderNet(nn.Module):
             cache_list[layer_index] = layer_cache
 
             # Calculate lambda_i and y_i for each layer. We will hold these in variables lambda_vals and intermediate_pred
-            conditional_prob = self.probs_proj(x)
-            lambda_vals.append(conditional_prob)
+            probs_proj_layer = self.probs_proj[layer_index]
+            # print(probs_proj_layer)
+            conditional_prob_exp: t.Tensor = probs_proj_layer(x)  # batch, seq, 1
+            conditional_prob_exp = rearrange(
+                conditional_prob_exp, "batch seq 1 -> batch seq"
+            )
+            conditional_prob = F.sigmoid(conditional_prob_exp)
+            # print(conditional_prob.shape)
+            lambda_vals[layer_index, ...] = conditional_prob
+
+            y = self.intermediate_layer_norm(x)
 
             current_pred = einsum(
                 "hidden_size vocab_size, batch seq hidden_size -> batch seq vocab_size",
                 self.unembedding,
-                self.intermediate_layer_norm(x),
+                y,
             )  # batch seq vocab_size
-            intermediate_pred.append(current_pred)
+            intermediate_pred[layer_index] = current_pred
 
             if self.training:
                 pass
@@ -176,68 +191,23 @@ class PonderNet(nn.Module):
         full_cache = full_kv_cache_from(cache_list=cache_list)
 
         ponder_cache = PonderCache(
-            intermediate_vals=t.stack(intermediate_pred),
-            lambda_vals=t.stack(lambda_vals),
+            intermediate_vals=intermediate_pred, lambda_vals=lambda_vals
         )
 
         return logits, full_cache, ponder_cache
 
-    def load_pretrained_weights(self):
-        """Load weights from OpenAI's pretrained model from HuggingFace."""
-
-        hf_gpt = helpers.load_pretrained_gpt()
-        for param in self.parameters():
-            param.requires_grad_(False)
-
-        # Embeddings (note the copy_ ensures that weights are copied in_place)
-        self.token_embedding.weight.copy_(hf_gpt.transformer.wte.weight)
-        self.pos_embedding.weight.copy_(hf_gpt.transformer.wpe.weight)
-        self._copy_weight_bias(self.final_layer_norm, hf_gpt.transformer.ln_f)
-
-        for my_block, hf_block in zip(self.blocks, hf_gpt.transformer.h):
-            assert isinstance(hf_block, HFGPT2Block)
-            assert isinstance(my_block, GPT2Block)
-
-            # Copy attention weights
-            self._copy_weight_bias(my_block.ln1, hf_block.ln_1)
-            self._copy_weight_bias(
-                my_block.attn.qkv_proj, hf_block.attn.c_attn, transpose=True
-            )
-            self._copy_weight_bias(
-                my_block.attn.output_proj,
-                hf_block.attn.c_proj,
-                transpose=True,
-            )
-
-            # Copy MLP weights
-            self._copy_weight_bias(my_block.MLP.ln2, hf_block.ln_2)
-            self._copy_weight_bias(
-                my_block.MLP.linear1, hf_block.mlp.c_fc, transpose=True
-            )
-            self._copy_weight_bias(
-                my_block.MLP.linear2, hf_block.mlp.c_proj, transpose=True
-            )
-
-        for p in self.parameters():
-            p.requires_grad_(True)
-
-    def _copy_weight_bias(self, mine, theirs, transpose=False):
-        mine.weight.copy_(theirs.weight.T if transpose else theirs.weight)
-        if mine.bias is not None:
-            mine.bias.copy_(theirs.bias)
-
 
 if __name__ == "__main__":
-    model = PonderNet(config, with_pretrained_weights=True, training=True)
+    model = PonderNet(config, training=True)
     x = t.randint(0, config.vocab_size, (1, 10))
-    logits, _cache = model(x)
+    logits, _kv_cache, ponder_cache = model(x)
     print(logits)
     print(logits.shape)
 
     print(model.config)
 
-    with SummaryWriter(comment="ModelArchitecture") as w:
-        w.add_graph(model, (x,))
+    # with SummaryWriter(comment="ModelArchitecture") as w:
+    #     w.add_graph(model, (x,))
 
     # k = t.randn(1, 10, 10)
     # v = t.randn(1, 10, 10)
