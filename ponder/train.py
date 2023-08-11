@@ -19,6 +19,7 @@ from typeguard import typechecked
 
 import wandb
 from gpt.config import GPTConfig
+from helpers import check_leaf_nodes
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from mixture_of_experts.train import ShakespeareDataset
 from ponder.model import PonderCache, PonderNet
@@ -142,15 +143,21 @@ class Trainer:
         logits, _kv_cache, ponder_cache = model(x)
 
         # Extract the Ponder probs (p) from the lambda vals
-        lambdas = ponder_cache.lambda_vals  # num_layers
-        lambda_complements = 1 - lambdas  # num_layers
+        lambdas = ponder_cache.lambda_vals  # num_layers batch seq
+        lambda_complements = 1 - lambdas  # num_layers batch seq
+
+        # TODO: Fix below
         exit_probs = t.stack(
             [lambdas[i] * t.prod(lambda_complements[:i]) for i in range(num_layers)]
-        )  # num_layers
+        )  # num_layers batch seq
+        flattened_exit_probs = rearrange(
+            exit_probs, "layer batch seq -> layer (batch seq)"
+        )
 
         exit_outputs = (
             ponder_cache.intermediate_vals
         )  #  num_layers, batch, seq_len, vocab_size
+
         flattened_exit_outputs = rearrange(
             exit_outputs, "layer batch seq vocab -> layer (batch seq) vocab"
         )  # num_layers, (batch * seq_len), vocab_size
@@ -159,14 +166,19 @@ class Trainer:
         flattened_targets = rearrange(y, "b s -> (b s)")  # bs
 
         # Calculate loss and backprop
-        layer_loss = []
+        loss_tensor = t.zeros(num_layers)
         for layer_index, layer_output in enumerate(flattened_exit_outputs):
-            layer_loss.append(
+            # print(layer_output.shape)  # bs, vocab_size
+            layer_loss = (
                 F.cross_entropy(layer_output, flattened_targets)
-                * exit_probs[layer_index]
+                # * flattened_exit_probs[layer_index]
             )
 
-        loss = t.sum(t.stack(layer_loss))
+            loss_tensor[layer_index] = layer_loss
+
+        _, bs, _ = flattened_exit_outputs.shape
+
+        loss = t.sum(loss_tensor) / bs
 
         if training:
             loss.backward()
@@ -177,7 +189,9 @@ class Trainer:
 
         return loss.item()
 
-    def train(self, data_source: str = "tiny_stories") -> nn.Module:
+    def train(
+        self, data_source: str = "tiny_stories", use_wandb: Optional[bool] = False
+    ) -> nn.Module:
         """Train the model on the data source."""
 
         # Print config and model parameters
@@ -196,6 +210,9 @@ class Trainer:
         # t.autograd.set_detect_anomaly(True)
 
         model = self.model.to(device)
+
+        # print(check_leaf_nodes(model))
+
         optimiser: Optimizer = self.Optimiser(
             model.parameters(), lr=self.config.learning_rate
         )
@@ -341,10 +358,10 @@ def main():
     # Set up the trainer
     trainer = Trainer(model=PonderNet(), max_iters=1000)
 
-    # print(trainer.count_parameters)
+    print(trainer.count_parameters)
 
     # Train and save the model
-    trainer.model = trainer.train()
+    trainer.model = trainer.train(use_wandb=False)
 
     # Load model
     # model = ...
