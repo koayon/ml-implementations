@@ -352,8 +352,9 @@ class Trainer:
         return self.model
 
     @property
-    def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+    def count_parameters(self) -> str:
+        num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        return f"{num_params:,}"
 
 
 def main():
