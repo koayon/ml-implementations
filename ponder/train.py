@@ -144,12 +144,20 @@ class Trainer:
 
         # Extract the Ponder probs (p) from the lambda vals
         lambdas = ponder_cache.lambda_vals  # num_layers batch seq
-        lambda_complements = 1 - lambdas  # num_layers batch seq
 
-        # TODO: Fix below
-        exit_probs = t.stack(
-            [lambdas[i] * t.prod(lambda_complements[:i]) for i in range(num_layers)]
-        )  # num_layers batch seq
+        _num_layers, batch_size, seq_len = lambdas.shape
+
+        lambda_complements = 1 - lambdas  # num_layers batch seq
+        cum_prod_lambda_complements = t.cumprod(lambda_complements, dim=0)
+
+        # Move the complements one to the right so it lines up for ele-wise mult
+        zeros = t.zeros(1, batch_size, seq_len)
+        cum_prod_lambda_complements = t.cat([cum_prod_lambda_complements, zeros], dim=0)
+        cum_prod_lambda_complements = cum_prod_lambda_complements[1:]
+
+        exit_probs = (
+            lambdas * cum_prod_lambda_complements
+        )  # num_layers batch seq (this is p)
         flattened_exit_probs = rearrange(
             exit_probs, "layer batch seq -> layer (batch seq)"
         )
@@ -157,22 +165,29 @@ class Trainer:
         exit_outputs = (
             ponder_cache.intermediate_vals
         )  #  num_layers, batch, seq_len, vocab_size
+        print(exit_outputs.shape)
 
         flattened_exit_outputs = rearrange(
             exit_outputs, "layer batch seq vocab -> layer (batch seq) vocab"
         )  # num_layers, (batch * seq_len), vocab_size
+        print(flattened_exit_outputs.shape)
 
         # Prepare targets
         flattened_targets = rearrange(y, "b s -> (b s)")  # bs
 
+        # TODO: Separate out exit_probs in loss multipliers
+
         # Calculate loss and backprop
         loss_tensor = t.zeros(num_layers)
         for layer_index, layer_output in enumerate(flattened_exit_outputs):
-            # print(layer_output.shape)  # bs, vocab_size
+            print(layer_output.shape)  # bs, vocab_size
             layer_loss = (
                 F.cross_entropy(layer_output, flattened_targets)
                 # * flattened_exit_probs[layer_index]
             )
+
+            print(loss_tensor.shape)
+            print(layer_loss.shape)
 
             loss_tensor[layer_index] = layer_loss
 
