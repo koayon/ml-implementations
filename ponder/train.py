@@ -219,9 +219,10 @@ class Trainer:
         best_loss = float("inf")
         sample_batch_num = 0
 
-        wandb.init(project="moe")
-        wandb_config = wandb.config
-        wandb.watch(model)
+        if use_wandb:
+            wandb.init(project="ponder")
+            wandb_config = wandb.config
+            wandb.watch(model)
 
         # Train the model
         for epoch in range(self.config.num_epochs):
@@ -298,14 +299,15 @@ class Trainer:
                         f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
                     )
                     # Log to wandb
-                    wandb.log(
-                        {
-                            "iter": sample_batch_num,
-                            "loss/train": train_loss,
-                            "loss/val": test_loss,
-                            "lr": self.config.learning_rate,
-                        }
-                    )
+                    if use_wandb:
+                        wandb.log(
+                            {
+                                "iter": sample_batch_num,
+                                "loss/train": train_loss,
+                                "loss/val": test_loss,
+                                "lr": self.config.learning_rate,
+                            }
+                        )
 
                     # Save checkpoint
                     if test_loss < best_loss:
