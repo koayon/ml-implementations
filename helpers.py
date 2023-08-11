@@ -65,3 +65,10 @@ def remove_hooks(module: t.nn.Module):
     module._backward_hooks.clear()
     module._forward_hooks.clear()
     module._forward_pre_hooks.clear()
+
+
+def check_leaf_nodes(model: nn.Module) -> dict[str, bool]:
+    out = {}
+    for p in model.named_parameters():
+        out[p[0]] = p[1].is_leaf
+    return out
