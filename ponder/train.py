@@ -29,6 +29,8 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 config = GPTConfig()
 
+DEBUG: bool = True
+
 
 # @typechecked
 class Trainer:
@@ -303,7 +305,6 @@ class Trainer:
                                 optimiser=optimiser,
                             )
                         num_batches += 1
-                        # print(f"Num test batches: {num_batches}/5")
                         if num_batches > 5:
                             break
                     test_loss /= num_batches
@@ -320,6 +321,9 @@ class Trainer:
                                 "lr": self.config.learning_rate,
                             }
                         )
+
+                    if DEBUG:
+                        break
 
                     # Save checkpoint
                     if test_loss < best_loss:
@@ -353,7 +357,10 @@ class Trainer:
     def load_model(self, checkpoint_path: str) -> nn.Module:
         """Load a model from the checkpoint."""
 
-        checkpoint = t.load(checkpoint_path)
+        try:
+            checkpoint = t.load(checkpoint_path)
+        except:
+            raise ValueError("Invalid checkpoint path")
 
         self.model.load_state_dict(checkpoint["model"])
 
