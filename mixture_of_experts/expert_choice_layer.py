@@ -3,10 +3,10 @@ from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange, repeat
-from fancy_einsum import einsum
 from torch import nn
 from torch.nn import functional as F
 
+from helpers import einsum
 from mixture_of_experts.cache import MoELayerCache
 from mixture_of_experts.config import MoEConfig
 

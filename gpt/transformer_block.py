@@ -4,12 +4,12 @@ from typing import Any, List, Optional, Tuple, Union
 import torch as t
 import transformers
 from einops import rearrange
-from fancy_einsum import einsum
 from torch import nn
 from transformers.activations import NewGELUActivation
 
 from gpt.cached_attention import AttentionCache, UnidirectionalAttention
 from gpt.group_query_attention import GroupedQueryAttention
+from helpers import einsum
 
 ACTIVATION_FUNCTIONS = dict(
     relu=nn.ReLU(),

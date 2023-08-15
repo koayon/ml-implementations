@@ -2,9 +2,10 @@ from typing import Union
 
 import numpy as np
 import torch as t
-from fancy_einsum import einsum
 from pad import pad1d, pad2d
 from torch import nn
+
+from helpers import einsum
 
 IntOrPair = Union[int, tuple[int, int]]
 Pair = tuple[int, int]

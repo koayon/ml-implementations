@@ -2,9 +2,9 @@ from typing import Any, Optional, Union
 
 import torch as t
 from einops import rearrange, repeat
-from fancy_einsum import einsum
 from torch import nn
 
+from helpers import einsum
 from mixture_of_experts.config import MoEConfig
 
 config = MoEConfig()

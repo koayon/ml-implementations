@@ -4,10 +4,11 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange
-from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from torch import nn
 from torch.nn import functional as F
+
+from helpers import einsum
 
 
 @dataclass

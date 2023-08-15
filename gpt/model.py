@@ -1,11 +1,10 @@
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Protocol, Tuple
 
 import tiktoken
 import torch as t
 import transformers
 from einops import rearrange
-from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from tensorboardX import SummaryWriter
 from torch import nn
@@ -14,7 +13,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 from gpt.cached_attention import AttentionCache
 from gpt.config import GPTConfig
 from gpt.transformer_block import GPT2Block
-from helpers import check_leaf_nodes, load_pretrained_gpt
+from helpers import check_leaf_nodes, einsum, load_pretrained_gpt
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -82,6 +81,11 @@ class FullKeyValueCache(t.Tensor):
     @property
     def seq_len(self) -> int:
         return self.data.shape[3]
+
+
+class WeightBias(Protocol):
+    weight: t.Tensor
+    bias: Optional[t.Tensor]
 
 
 class GPT2(nn.Module):
@@ -173,7 +177,7 @@ class GPT2(nn.Module):
 
         return logits, full_cache
 
-    def load_pretrained_weights(self):
+    def load_pretrained_weights(self) -> None:
         """Load weights from OpenAI's pretrained model from HuggingFace."""
 
         hf_gpt = load_pretrained_gpt()

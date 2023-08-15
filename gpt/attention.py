@@ -3,9 +3,10 @@ from typing import Any, Optional
 
 import torch as t
 from einops import rearrange
-from fancy_einsum import einsum
 from torch import nn
 from torch.nn import functional as F
+
+from helpers import einsum
 
 
 class UnidirectionalAttention(nn.Module):

@@ -7,13 +7,13 @@ import plotly.express as px
 import tiktoken
 import torch as t
 from einops import rearrange, repeat
-from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from tensorboardX import SummaryWriter
 from torch import nn
 from torch.distributions.categorical import Categorical
 
 from gpt.transformer_block import GPT2Block
+from helpers import einsum
 from mixture_of_experts.cache import MoEFullCache, MoELayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
