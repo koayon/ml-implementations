@@ -1,16 +1,17 @@
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 import torch as t
-from fancy_einsum import einsum
 from torch.autograd import grad
 from torch.autograd.functional import hvp
 from torch.optim.optimizer import Optimizer
+
+from helpers import einsum
 
 
 def hutchinson_estimator(
     params: t.Tensor,
     gradients: t.Tensor,
-    loss_function: Callable = None,
+    loss_function: Optional[Callable] = None,
     num_estimates: int = 1,
 ) -> t.Tensor:
     """Hutchinson's trace estimator estimates the trace of a large matrix with a Monte Carlo estimate.
@@ -53,7 +54,7 @@ def hutchinson_estimator(
 
 
 def square_estimator(
-    params: t.Tensor, gradients: t.Tensor, loss_function: Callable = None
+    params: t.Tensor, gradients: t.Tensor, loss_function: Optional[Callable] = None
 ) -> t.Tensor:
     """We can approximate the Hessian diagonal by the element-wise product of the gradients
 
@@ -68,7 +69,7 @@ class Sophia(Optimizer):
     def __init__(
         self,
         params: Iterable[t.nn.parameter.Parameter],
-        estimator: Callable[[t.Tensor, t.Tensor], float] = square_estimator,
+        estimator: Callable = square_estimator,
         lr: float = 0.001,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-08,

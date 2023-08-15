@@ -4,9 +4,7 @@ from typing import Any, List, Optional, Tuple
 import tiktoken
 import torch as t
 import torch.nn.functional as F
-import transformers
 from einops import rearrange
-from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from numpy import isin
 from tensorboardX import SummaryWriter
@@ -14,11 +12,11 @@ from torch import nn
 from torch.distributions.categorical import Categorical
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
-import helpers
 from gpt.cached_attention import AttentionCache
 from gpt.config import GPTConfig
 from gpt.model import FullKeyValueCache
 from gpt.transformer_block import GPT2Block
+from helpers import einsum
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -104,14 +102,14 @@ class PonderNet(nn.Module):
     ) -> Tuple[t.Tensor, FullKeyValueCache, PonderCache]:
         """
         Args:
-            x: shape (batch, seq), dtype t.int64 - the token ids
+            x (t.Tensor): shape (batch, seq), dtype t.int64 - the token ids
+            cache (Optional[FullKeyValueCache], optional): _description_. Defaults to None.
 
-        Return:
-            output_logits: shape (batch, seq, vocab_size), dtype t.float32- the output logits
-            kv_cache
-            lambda_vals: list
-            intermediate_preds: list of tensors (these are the y_i values)
-
+        Returns:
+            Tuple[t.Tensor, FullKeyValueCache, PonderCache]:
+                output_logits: shape (batch, seq, vocab_size), dtype t.float32- the output logits
+                kv_cache
+                PonderCache containing lambda_vals & intermediate_preds
         """
         layer_cache: AttentionCache
         cache_list: List[AttentionCache]
@@ -200,6 +198,7 @@ class PonderNet(nn.Module):
 if __name__ == "__main__":
     model = PonderNet(config, training=True)
     x = t.randint(0, config.vocab_size, (1, 10))
+    logits: t.Tensor
     logits, _kv_cache, ponder_cache = model(x)
     print(logits)
     print(logits.shape)

@@ -5,16 +5,15 @@ import tiktoken
 import torch as t
 import transformers
 from einops import rearrange
-from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
-import helpers
 from alibi.transformer_block import GPT2Block
 from gpt.config import GPTConfig
 from gpt.model import FullKeyValueCache
+from helpers import einsum
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -67,9 +66,19 @@ class AlibiGPT(nn.Module):
         self, x: t.Tensor, cache: Optional[FullKeyValueCache] = None
     ) -> Tuple[t.Tensor, Optional[FullKeyValueCache]]:
         """
-        x: shape (batch, seq), dtype t.int64 - the token ids
+        Parameters
+        ----------
+        x : t.Tensor
+             shape (batch, seq), dtype t.int64 - the token ids
+        cache : Optional[FullKeyValueCache], optional
+            shape (batch, seq, vocab_size), dtype t.float32- the output logits
+            By default None
 
-        Return: shape (batch, seq, vocab_size), dtype t.float32- the output logits
+        Returns
+        -------
+        Tuple[t.Tensor, Optional[FullKeyValueCache]]
+            Logits
+            Cache
         """
 
         if cache is None:
@@ -77,7 +86,7 @@ class AlibiGPT(nn.Module):
         else:
             cache_list = cache.to_cache_list()
 
-        _batch_size, seq_len = x.shape
+        _batch_size, _seq_len = x.shape
 
         # Combine the token and position embeddings for the embedding layer
         embedding_tokens = self.token_embedding(x)  # (batch, seq, hidden_size)
@@ -107,6 +116,7 @@ class AlibiGPT(nn.Module):
 if __name__ == "__main__":
     model = AlibiGPT(config)
     x = t.randint(0, config.vocab_size, (1, 10))
+    logits: t.Tensor
     logits, _cache = model(x)
     print(logits)
     print(logits.shape)
