@@ -21,12 +21,24 @@ class MoELayerCache:
 
 # @typechecked
 class MoEFullCache(Dict[str, MoELayerCache]):
+    """Cache containing the G, routing weights and assignments for each layer.
+
+    G is the softmaxed routing weights for the top k experts
+
+    token_assignments is the top k expert ids
+
+    routing_weights is the raw outputs of the routing model (before softmax)
+    """
+
     def __init__(self, moe_cache_dict: Dict[str, MoELayerCache]):
         super().__init__(moe_cache_dict)
 
     def __setitem__(self, idx: str, cache: MoELayerCache) -> None:
         assert isinstance(cache, MoELayerCache)
         return super().__setitem__(idx, cache)
+
+    def __getitem__(self, __key: str) -> MoELayerCache:
+        return super().__getitem__(__key)
 
     @property
     def G(self) -> Float[t.Tensor, "layer k num_experts"]:
