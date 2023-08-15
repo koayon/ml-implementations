@@ -4,8 +4,9 @@ import os
 import tempfile
 import time
 from functools import wraps
-from typing import Callable, Generic, Iterator, Optional, TypeVar, cast
+from typing import Any, Callable, Optional, Protocol, Tuple, Union
 
+import fancy_einsum
 import joblib
 import requests
 import torch as t
@@ -72,3 +73,19 @@ def check_leaf_nodes(model: nn.Module) -> dict[str, bool]:
     for p in model.named_parameters():
         out[p[0]] = p[1].is_leaf
     return out
+
+
+def einsum(equation: str, *operands) -> t.Tensor:
+    """Torch einsum with type hinting.
+
+    Parameters
+    ----------
+    equation : str
+        einsum formula which can use full words rather than just letters
+    operands : Tensors to process
+
+    Returns
+    -------
+    t.Tensor
+    """
+    return t.Tensor(fancy_einsum.einsum(equation, *operands))
