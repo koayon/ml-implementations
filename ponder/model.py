@@ -17,7 +17,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 import helpers
 from gpt.cached_attention import AttentionCache
 from gpt.config import GPTConfig
-from gpt.model import FullKeyValueCache, full_kv_cache_from
+from gpt.model import FullKeyValueCache
 from gpt.transformer_block import GPT2Block
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
@@ -188,7 +188,7 @@ class PonderNet(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        full_cache = full_kv_cache_from(cache_list=cache_list)
+        full_cache = FullKeyValueCache.from_cache_list(cache_list=cache_list)
 
         ponder_cache = PonderCache(
             intermediate_vals=intermediate_pred, lambda_vals=lambda_vals

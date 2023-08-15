@@ -49,6 +49,24 @@ class FullKeyValueCache(t.Tensor):
 
         return attn_caches  # list of AttentionCaches
 
+    @classmethod
+    def from_cache_list(cls, cache_list: List[AttentionCache]) -> "FullKeyValueCache":
+        """Constructs a FullKeyValueCache from a list of attention caches.
+        Input shape: list of Attention caches which contain (batch, seq, dim) tensors for k and v
+        """
+        if cache_list[0] is None:
+            return cls([])
+
+        key_layer_caches = t.stack(
+            [layer_cache.k for layer_cache in cache_list]
+        )  # (layer, batch, seq, dim)
+        value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
+
+        full_tensor = t.stack(
+            [key_layer_caches, value_layer_caches], dim=1
+        )  # (layer, 2, batch, seq, dim)
+        return cls(full_tensor)
+
     @property
     def k(self) -> t.Tensor:
         return self.data[:, 0]
@@ -64,21 +82,6 @@ class FullKeyValueCache(t.Tensor):
     @property
     def seq_len(self) -> int:
         return self.data.shape[3]
-
-
-def full_kv_cache_from(cache_list: List[AttentionCache]) -> FullKeyValueCache:
-    if cache_list[0] is None:
-        return FullKeyValueCache([])
-
-    key_layer_caches = t.stack(
-        [layer_cache.k for layer_cache in cache_list]
-    )  # (layer, batch, head, seq, dim)
-    value_layer_caches = t.stack([layer_cache.v for layer_cache in cache_list])
-
-    full_tensor = t.stack(
-        [key_layer_caches, value_layer_caches], dim=1
-    )  # (batch, 2, layer, seq, dim)
-    return FullKeyValueCache(full_tensor)
 
 
 class GPT2(nn.Module):
@@ -166,7 +169,7 @@ class GPT2(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        full_cache = full_kv_cache_from(cache_list=cache_list)
+        full_cache = FullKeyValueCache.from_cache_list(cache_list=cache_list)
 
         return logits, full_cache
 
@@ -217,10 +220,10 @@ class GPT2(nn.Module):
 
 if __name__ == "__main__":
     model = GPT2(config, with_pretrained_weights=False)
-    print(check_leaf_nodes(model))
+    # print(check_leaf_nodes(model))
 
-    # x = t.randint(0, config.vocab_size, (1, 10))
-    # logits, _cache = model(x)
+    x = t.randint(0, config.vocab_size, (1, 10))
+    logits, _cache = model(x)
 
     # print(logits)
     # print(logits.shape)

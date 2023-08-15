@@ -25,7 +25,7 @@ config = GPTConfig()
 
 
 class AlibiGPT(nn.Module):
-    """GPT-style decoder model with ALiBi (ATTENTION WITH LINEAR BIASES ENABLES)
+    """GPT-style decoder model with ALiBi (ATTENTION WITH LINEAR BIASES)
     From Train Short, Test Long paper.
 
     Reference: https://arxiv.org/pdf/2108.12409.pdf
@@ -99,7 +99,7 @@ class AlibiGPT(nn.Module):
             y,
         )  # batch, seq, vocab_size
 
-        # full_cache = full_cache_from_cache_list(cache_list=cache_list)
+        # full_cache = FullKeyValueCache.from_cache_list(cache_list=cache_list)
 
         return logits, None
 
