@@ -1,4 +1,5 @@
 import collections
+import token
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, OrderedDict, Protocol, Tuple, TypedDict
 
@@ -19,6 +20,8 @@ from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
 
 config = MoEConfig()
+
+tokeniser = tiktoken.encoding_for_model(config.tokeniser_string)
 
 
 class SparseMoETransformer(nn.Module):
@@ -140,7 +143,7 @@ def token_path(cache: MoEFullCache, token_num: int) -> dict:
 
     # Get the routing matrix for the token
     weighted_token_assignment = G * bool_token_assignment  # layer, k, num_experts
-    out = weighted_token_assignment.max(dim=1)[0].numpy()  # layer, num_experts
+    out = weighted_token_assignment.max(dim=1)[0]  # layer, num_experts
 
     array = np.array(out)  # num_expert_layer, num_experts
     _num_expert_layers, num_experts = array.shape
@@ -154,6 +157,25 @@ def token_path(cache: MoEFullCache, token_num: int) -> dict:
     fig.show()
 
     return out
+
+
+def expert_importance(cache: MoEFullCache) -> t.Tensor:
+    """
+    Calculates the importance of each expert in a layer based on the softmaxed routing weights.
+
+    Parameters
+    ----------
+    cache : MoEFullCache
+        The cache object containing the softmaxed routing weights.
+
+    Returns
+    -------
+    torch.Tensor
+        A tensor of shape (layer, num_experts) representing the importance of each expert in each layer.
+    """
+    G = cache.G  # layer, k, num_experts
+    importance = G.sum(dim=1)  # layer, num_experts
+    return importance
 
 
 def compare_models(
