@@ -20,7 +20,6 @@ from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
 
 config = MoEConfig()
-
 tokeniser = tiktoken.encoding_for_model(config.tokeniser_string)
 
 
@@ -176,6 +175,49 @@ def expert_importance(cache: MoEFullCache) -> t.Tensor:
     G = cache.G  # layer, k, num_experts
     importance = G.sum(dim=1)  # layer, num_experts
     return importance
+
+
+def top_tokens_for_expert(
+    cache: MoEFullCache,
+    layer_index: str,
+    expert_num: int,
+    input: t.Tensor,
+    tokeniser: tiktoken.Encoding = tokeniser,
+) -> list[str]:
+    """
+    Retrieve the top tokens for a specific expert in a specific layer.
+
+    Parameters
+    ----------
+    cache : MoEFullCache
+        The cache of expert information.
+    layer_index : str
+        The index of the layer.
+    expert : int
+        The index of the expert.
+    input : t.Tensor
+        The input tensor of tokens - shape (batch, seq).
+    tokeniser : tiktoken.Encoding
+        The model's tokeniser - used to decode the tokens.
+
+    Returns
+    -------
+    list[str]
+        The top tokens for the specified expert in the specified layer.
+    """
+    layer_cache = cache[layer_index]
+    tokens_indexes = layer_cache.token_assignments[:, expert_num]  # k
+
+    tokens = rearrange(input, "batch seq -> (batch seq)")
+
+    expert_tokens = tokens[tokens_indexes].unsqueeze(dim=1).cpu()  # k, 1
+
+    expert_tokens_list = expert_tokens.tolist()
+    print(expert_tokens_list)
+
+    str_tokens = tokeniser.decode_batch(expert_tokens.tolist())
+
+    return str_tokens
 
 
 def compare_models(
