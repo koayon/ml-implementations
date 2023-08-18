@@ -254,6 +254,20 @@ def expert_token_table(
     return df
 
 
+def add_in_hooks(module: nn.Module, display_name: str, activations: dict) -> None:
+    def fwd_hook(mod, input, output):
+        activations[f"pre_{display_name}"] = input
+
+    module.register_forward_hook(fwd_hook)
+
+
+def add_out_hooks(module: nn.Module, display_name: str, activations: dict) -> None:
+    def fwd_hook(mod, input, output):
+        activations[f"post_{display_name}"] = output
+
+    module.register_forward_hook(fwd_hook)
+
+
 def compare_models(
     model: SparseMoETransformer,
     new_model_path: str,
