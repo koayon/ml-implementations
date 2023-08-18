@@ -224,6 +224,36 @@ def top_tokens_for_expert(
     return str_tokens, tokens_indexes.tolist()
 
 
+def expert_token_table(
+    cache: MoEFullCache, input: t.Tensor, tokeniser: tiktoken.Encoding = tokeniser
+) -> pd.DataFrame:
+    layer_indexes = []
+    expert_nums = []
+    expert_strs = []
+
+    for layer_index in cache.layer_indices:
+        for expert_num in range(cache.num_experts):
+            top_tokens = top_tokens_for_expert(
+                cache=cache,
+                layer_index=layer_index,
+                expert_num=expert_num,
+                input=input,
+                tokeniser=tokeniser,
+            )
+            layer_indexes.append(layer_index)
+            expert_nums.append(expert_num)
+            expert_strs.append(top_tokens)
+
+    df = pd.DataFrame(
+        {
+            "layer_index": layer_indexes,
+            "expert_num": expert_nums,
+            "expert_tokens": expert_strs,
+        }
+    )
+    return df
+
+
 def compare_models(
     model: SparseMoETransformer,
     new_model_path: str,
