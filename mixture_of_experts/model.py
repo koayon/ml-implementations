@@ -1,9 +1,10 @@
 import collections
 import token
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, OrderedDict, Protocol, Tuple, TypedDict
+from typing import Iterable, List, Optional, OrderedDict, Protocol, Tuple
 
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import tiktoken
 import torch as t
@@ -14,7 +15,7 @@ from torch import nn
 from torch.distributions.categorical import Categorical
 
 from gpt.transformer_block import GPT2Block
-from helpers import einsum
+from helpers import einsum, remove_hooks
 from mixture_of_experts.cache import MoEFullCache, MoELayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
@@ -46,15 +47,15 @@ class SparseMoETransformer(nn.Module):
         self.layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
         for i in range(self.num_layers):
             if i % 2 == 0:
-                self.layers[f"moe_block{i}"] = MoEBlock(
-                    config=config,
-                    layer_id=f"moe_layer_{i}",
-                )
-            else:
                 self.layers[f"transformer_block{i}"] = GPT2Block(
                     layer_index=i,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
+                )
+            else:
+                self.layers[f"moe_block{i}"] = MoEBlock(
+                    config=config,
+                    layer_id=f"moe_layer_{i}",
                 )
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -64,6 +65,12 @@ class SparseMoETransformer(nn.Module):
         self.sequential_layers = nn.Sequential(self.layers)
         self.final_norm = nn.LayerNorm([config.hidden_size])
         self.cache = MoEFullCache({})
+
+    def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
+        out = einsum(
+            "b s h, v h -> b s v", z, self.token_embedding.weight
+        )  # batch seq vocab_size
+        return out
 
     def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoEFullCache]:
         """
@@ -86,9 +93,7 @@ class SparseMoETransformer(nn.Module):
         z = self.final_norm(x)
 
         # Unembed to get logits for each token
-        out = einsum(
-            "b s h, v h -> b s v", z, self.token_embedding.weight
-        )  # batch seq vocab_size
+        out = self.unembed(z)  # batch seq vocab_size
 
         return out, self.cache
 
@@ -183,14 +188,14 @@ def top_tokens_for_expert(
     expert_num: int,
     input: t.Tensor,
     tokeniser: tiktoken.Encoding = tokeniser,
-) -> list[str]:
+) -> Tuple[list[str], list[int]]:
     """
     Retrieve the top tokens for a specific expert in a specific layer.
 
     Parameters
     ----------
     cache : MoEFullCache
-        The cache of expert information.
+        The cache of expert routing.
     layer_index : str
         The index of the layer.
     expert : int
@@ -203,7 +208,9 @@ def top_tokens_for_expert(
     Returns
     -------
     list[str]
-        The top tokens for the specified expert in the specified layer.
+        The top tokens for the specified expert in the specified layer. There should be k tokens
+    list[int]
+        The indices of the top tokens in the sequence for the specified expert.
     """
     layer_cache = cache[layer_index]
     tokens_indexes = layer_cache.token_assignments[:, expert_num]  # k
@@ -212,12 +219,9 @@ def top_tokens_for_expert(
 
     expert_tokens = tokens[tokens_indexes].unsqueeze(dim=1).cpu()  # k, 1
 
-    expert_tokens_list = expert_tokens.tolist()
-    print(expert_tokens_list)
-
     str_tokens = tokeniser.decode_batch(expert_tokens.tolist())
 
-    return str_tokens
+    return str_tokens, tokens_indexes.tolist()
 
 
 def compare_models(
@@ -246,13 +250,29 @@ def main():
 
     x = t.randint(low=0, high=config.vocab_size, size=(1, 6))  # batch seq
     y, moe_cache = model(x)  # batch seq vocab_size, Cache dict
-    print("Cache", moe_cache)
+    # print("Cache", moe_cache)
+
+    expert0_0 = top_tokens_for_expert(
+        cache=moe_cache, layer_index="moe_block0", expert_num=0, input=x
+    )
+
+    print(expert0_0)
+
+    # expert_df = expert_token_table(cache=moe_cache, input=x)
+    # print(expert_df)
+
+    before_after, pre, post = logit_lens_before_and_after_expert(
+        input=x, layer_index=0, expert_num=0, model=model
+    )
+    print(before_after)
+    print(pre)
+    print(post)
 
     # with SummaryWriter(comment="ModelArchitecture") as w:
     #     w.add_graph(model, (x,))
 
-    token_0_path = token_path(cache=moe_cache, token_num=0)
-    print(token_0_path)
+    # token_0_path = token_path(cache=moe_cache, token_num=0)
+    # print(token_0_path)
 
     # compare_models(model, new_model_path="models/sgd_100_2023-07-28_02:51:31.pt")
 
