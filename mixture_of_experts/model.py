@@ -268,6 +268,13 @@ def add_out_hooks(module: nn.Module, display_name: str, activations: dict) -> No
     module.register_forward_hook(fwd_hook)
 
 
+def add_ablation_hook(module: nn.Module) -> None:
+    def fwd_hook(mod, input, output):
+        output = t.zeros_like(output)
+
+    module.register_forward_hook(fwd_hook)
+
+
 def compare_models(
     model: SparseMoETransformer,
     new_model_path: str,
