@@ -48,11 +48,12 @@ class GPT2Block(nn.Module):
 
         self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
         if group_size > 0:
+            assert num_heads % group_size == 0
             self.attn = GroupedQueryAttention(
                 hidden_size=hidden_size,
                 num_heads=num_heads,
                 dropout=dropout,
-                num_groups=4,
+                num_groups=num_heads // group_size,
             )
         else:
             self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
