@@ -39,21 +39,15 @@ class ExpertChoiceFFN(nn.Module):
         self.num_experts = config.num_experts
         self.layer_id = layer_id
 
-        self.router = (
-            router
-            if router is not None
-            else nn.Linear(self.hidden_size, self.num_experts, device=device)
+        self.router = router or nn.Linear(
+            self.hidden_size, self.num_experts, device=device
         )
 
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
-        self.expert = (
-            expert
-            if expert is not None
-            else nn.Linear(self.hidden_size, self.hidden_size, device=device)
-        )
+        expert = expert or nn.Linear(self.hidden_size, self.hidden_size, device=device)
 
-        self.experts = nn.ModuleList([self.expert for _ in range(self.num_experts)])
+        self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
         self.expert_dropout = nn.Dropout(config.expert_dropout)
         self.k = k
         self.c = c
