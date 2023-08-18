@@ -17,7 +17,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 
 mem = joblib.Memory(tempfile.gettempdir() + "/joblib_cache")
 
-ACTIVATION_FUNCTIONS = dict(relu=nn.ReLU(), gelu=nn.GELU())
+ACTIVATION_FUNCTIONS = dict(relu=nn.ReLU(), gelu=nn.GELU(), silu=nn.SiLU())
 
 
 @mem.cache
@@ -44,7 +44,7 @@ def assert_shape_equal(actual: t.Tensor, expected: t.Tensor) -> None:
         raise AssertionError(f"expected shape={expected.shape}, got {actual.shape}")
 
 
-def allclose(actual: t.Tensor, expected: t.Tensor, rtol=1e-4) -> None:
+def allclose(actual: t.Tensor, expected: t.Tensor, rtol=1e-4) -> bool:
     assert_shape_equal(actual, expected)
     left = (actual - expected).abs()
     right = rtol * expected.abs()
@@ -56,9 +56,10 @@ def allclose(actual: t.Tensor, expected: t.Tensor, rtol=1e-4) -> None:
             f"allclose failed with {num_wrong} / {left.nelement()} entries outside tolerance"
         )
     print(f"Test passed with max absolute deviation of {left.max()}")
+    return True
 
 
-def remove_hooks(module: t.nn.Module):
+def remove_hooks(module: t.nn.Module) -> None:
     """Remove all hooks from module.
 
     Use module.apply(remove_hooks) to do this recursively.
