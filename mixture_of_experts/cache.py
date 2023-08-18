@@ -55,3 +55,7 @@ class MoEFullCache(Dict[str, MoELayerCache]):
     @property
     def layer_indices(self) -> list[str]:
         return list(self.keys())
+
+    @property
+    def num_experts(self) -> int:
+        return self.G.shape[-1]

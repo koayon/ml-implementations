@@ -8,7 +8,7 @@ from torch.nn import functional as F
 class SwiGLUFeedForward(nn.Module):
     """Implements a SwiGLU feed forward network inspired by Swish paper: https://arxiv.org/pdf/1710.05941v1.pdf
 
-    Llama 2 paper receommends SwiGLU as the activation function for FFN with hidden_dim = 2 / 3 * in_features
+    Llama 2 paper receommends SwiGLU as the activation function for FFN with hidden_dim = 2 / 3 * in_features * mult
     """
 
     def __init__(
@@ -28,7 +28,7 @@ class SwiGLUFeedForward(nn.Module):
         )
 
     def forward(self, x):
-        # FFN_ReLU would be simply w2(ReLU(w1_x)) instead we use SwiGLU w2(Swish(w1_x))
+        # FFN_ReLU would be simply w2(ReLU(w1_x)) instead we use SwiGLU:  w2(Swish(w1_x))
         # Where swish = sigmoid(x) * x (the gating function)
 
         swish = F.silu(self.w1(x))
