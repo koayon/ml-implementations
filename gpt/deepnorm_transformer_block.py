@@ -22,6 +22,8 @@ class DeepNormBlock(nn.Module):
     """
     Decoder-only Transformer Block with DeepNorm.
 
+    DeepNorm should have the performance of PostNorm (putting LayerNorm after the residual connection) and the training stability of PreNorm (putting LayerNorm before the residual connection).
+
     Reference: https://arxiv.org/pdf/2203.00555.pdf
     """
 
@@ -94,9 +96,11 @@ class DeepNormBlock(nn.Module):
         Return: shape (batch, seq, hidden_size)
         """
         y, layer_cache = self.attn(x, layer_cache=layer_cache)
+        # DeepNorm
         x = self.ln1(x * self.alpha + y)
 
         y = self.MLP(x)
+        # DeepNorm
         x = self.ln2(x * self.alpha + y)
 
         return x, layer_cache
