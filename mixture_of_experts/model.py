@@ -275,6 +275,113 @@ def add_ablation_hook(module: nn.Module) -> None:
     module.register_forward_hook(fwd_hook)
 
 
+def logit_lens_before_and_after_expert(
+    input: Int[t.Tensor, "batch seq"],
+    # token_indices: Iterable[int],
+    layer_index: int,
+    expert_num: int,
+    model: SparseMoETransformer,
+    tokeniser: tiktoken.Encoding = tokeniser,
+) -> Tuple[pd.DataFrame, list, list]:
+    """Idea: First forward pass the input with hooks to get the activations before and after the expert.
+    Then, for each token which is relevant, umembed
+
+    Parameters
+    ----------
+    input : t.Tensor
+        _description_
+    token_indices : t.Tensor
+        _description_
+    layer_index : str
+        _description_
+    expert_num : int
+        _description_
+    model : SparseMoETransformer
+        _description_
+    tokeniser : tiktoken.Encoding, optional
+        _description_, by default tokeniser
+
+    Returns
+    -------
+    pd.DataFrame
+        _description_
+    """
+
+    assert layer_index % 2 == 0, "Only works for MoE layers"
+
+    # Add hooks
+    activations: dict[str, Float[t.Tensor, "batch, seq, hidden"]] = {}
+    layer: nn.Module = model.sequential_layers[layer_index]
+    # expert: nn.Module = layer.experts[expert_num]  # type: ignore
+
+    # Ablate other experts
+    for i, expert in enumerate(layer.expert_layer.experts):  # type: ignore
+        if i != expert_num:
+            add_ablation_hook(expert)  # type: ignore
+
+    name = f"layer_{layer_index}_expert_{expert_num}"
+    add_in_hooks(layer.ln2, name, activations)  # type: ignore
+    add_out_hooks(layer.expert_layer, name, activations)  # type: ignore
+
+    # TODO: Confused that even the tokens not routed to our expert seem to have changed?
+    # Examine this
+
+    # Forward pass and get activations
+    with t.inference_mode():
+        with t.no_grad():
+            # Getting activations before expert layer and after expert layer where only the chosen expert is active
+            model(input)
+    model.apply(remove_hooks)
+
+    pre_unmbedded = model.unembed(activations[f"pre_{name}"][0])  # batch seq vocab_size
+    post_unembedded = model.unembed(
+        activations[f"post_{name}"][0]
+    )  # batch seq vocab_size
+
+    pre_tokens = pre_unmbedded.argmax(dim=-1)  # batch seq
+    post_tokens = post_unembedded.argmax(dim=-1)  # batch seq
+
+    pre_str_tokens = tokeniser.decode_batch(pre_tokens.tolist())
+    post_str_tokens = tokeniser.decode_batch(post_tokens.tolist())
+
+    before_after = {f"Before {name}": pre_str_tokens, f"After {name}": post_str_tokens}
+
+    return pd.DataFrame(before_after), pre_str_tokens, post_str_tokens
+
+
+def logit_diffs(
+    input: Int[t.Tensor, "batch seq"],
+    tokens_to_check: list[str],
+    layer_index: int,
+    expert_num: int,
+    model: SparseMoETransformer,
+    tokeniser: tiktoken.Encoding = tokeniser,
+) -> pd.DataFrame:
+    """Returns the difference in logits for given potential tokens before and after the expert layer.
+
+    Parameters
+    ----------
+    input : Int[t.Tensor, "batch seq"]
+        _description_
+    tokens_to_check : list[str]
+        _description_
+    layer_index : int
+        _description_
+    expert_num : int
+        _description_
+    model : SparseMoETransformer
+        _description_
+    tokeniser : tiktoken.Encoding, optional
+        _description_, by default tokeniser
+
+    Returns
+    -------
+    pd.DataFrame
+        _description_
+    """
+    raise NotImplementedError
+
+
 def compare_models(
     model: SparseMoETransformer,
     new_model_path: str,
