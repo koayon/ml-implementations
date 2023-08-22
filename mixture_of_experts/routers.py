@@ -17,24 +17,28 @@ class HashRouter(nn.Module):
     def __init__(
         self,
         *,
+        k: Optional[int] = None,
         config: MoEConfig,
     ):
         super().__init__()
         self.num_experts = config.num_experts
         self.vocab_size = config.vocab_size
+        self.k = k or 1
 
     def forward(
-        self, input: Int[t.Tensor, "batch, seq"], hash: Int[t.Tensor, "vocab_size"]
+        self, input: Int[t.Tensor, "batch, seq"], hash: Int[t.Tensor, "vocab_size, k"]
     ) -> Int[t.Tensor, "batch, seq"]:
         "Takes in token ids and a hashing function and returns the expert num that each token should be assigned to."
-        return hash[input]  # batch, seq
+        return hash[input]  # batch, seq, k
 
     def build_random_hash(self, seed: Optional[int] = None) -> t.Tensor:
         g = t.Generator()
         if seed is not None:
             g.manual_seed(seed)
 
-        hash = t.randint(high=self.num_experts, size=(self.vocab_size,))
+        hash = t.randint(
+            high=self.num_experts, size=(self.vocab_size, self.k), generator=g
+        )
         return hash
 
     def build_balanced_hash(self) -> t.Tensor:
