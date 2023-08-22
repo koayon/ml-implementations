@@ -69,7 +69,7 @@ class ExpertChoiceFFN(nn.Module):
 
         batch_seq_size = x.shape[0]
 
-        # Select top-k expert, with one-hot vector
+        # Select top-k expert, with one-hot vector. P is the permutation matrix
         P: t.Tensor = nn.functional.one_hot(
             chosen_token_index, num_classes=batch_seq_size
         )  # k num_experts (one-hot)
@@ -121,7 +121,7 @@ class ExpertChoiceFFN(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         h = self.routing_dropout(self.router(x))  # bs num_experts
 
-        # Calculate router score or Gate Value
+        # Calculate router score or Gate Value.
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
