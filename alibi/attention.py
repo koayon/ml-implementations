@@ -1,6 +1,6 @@
 import math
 from functools import lru_cache
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange, repeat
@@ -9,11 +9,10 @@ from torch.nn import functional as F
 
 from gpt.cached_attention import AttentionCache
 from helpers import einsum
+from mixture_of_experts.config import MoEConfig
+from moet_experiment.moet_config import MoETConfig
 
-# from mixture_of_experts.config import MoEConfig
-# from moet_experiment.moet_config import MoETConfig
-
-# config = MoETConfig()
+config = MoETConfig()
 
 
 class AlibiUnidirectionalAttention(nn.Module):
@@ -31,19 +30,21 @@ class AlibiUnidirectionalAttention(nn.Module):
     def __init__(
         self,
         *,
-        # config: MoETConfig,
+        # config: MoETConfig | MoEConfig = config,
         hidden_size: int,
         num_heads: int,
         head_size: Optional[int] = None,
         dropout=0.1,
-        max_seq_len: int = 512,
+        # max_seq_len: int = 512,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         assert self.hidden_size % self.num_heads == 0
 
-        self.head_size = self.hidden_size // self.num_heads
+        self.head_size = (
+            head_size if head_size is not None else self.hidden_size // self.num_heads
+        )
 
         self.qkv_proj = nn.Linear(
             self.hidden_size, (self.num_heads * self.head_size) * 3
@@ -92,7 +93,9 @@ class AlibiUnidirectionalAttention(nn.Module):
 
         return mask
 
-    def forward(self, x: t.Tensor, cache: Optional[Any] = None) -> t.Tensor:
+    def forward(
+        self, x: t.Tensor, layer_cache: Optional[Any] = None
+    ) -> Tuple[t.Tensor, None]:
         """
         x: shape (batch, seq, hidden_size)
 
@@ -144,7 +147,7 @@ class AlibiUnidirectionalAttention(nn.Module):
         out = self.output_proj(combined_with_v)  # batch, seq, hidden_size
         out = self.resid_dropout(out)
 
-        return out
+        return out, None
 
         # TODO: Cache KV Cache for inference!
 
