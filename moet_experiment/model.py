@@ -136,6 +136,9 @@ class MoET(nn.Module):
         # Unembed to get logits for each token
         out = self.unembed(z)  # batch seq vocab_size
 
+        # Make sure the cache is consistent shapes even when the number of experts per layer varies
+        self.cache.pad_with_0s()
+
         return out, self.cache
 
     def load_model(self, model_path: str):

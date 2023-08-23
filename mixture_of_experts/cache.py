@@ -58,4 +58,19 @@ class MoEFullCache(Dict[str, MoELayerCache]):
 
     @property
     def num_experts(self) -> int:
-        return self.G.shape[-1]
+        return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
+
+    def pad_with_0s(self) -> None:
+        """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
+        for _, cache in self.items():
+            if cache.G.shape[1] < self.num_experts:
+                # Get zeros to double the number of experts and pad the cache
+                zeros = t.zeros_like(cache.G)
+                cache.G = t.cat([cache.G, zeros], dim=1)
+                cache.token_assignments = t.cat([cache.token_assignments, zeros], dim=1)
+
+                routing_weight_zeros = t.zeros_like(cache.routing_weights)
+                cache.routing_weights = t.cat(
+                    [cache.routing_weights, routing_weight_zeros],
+                    dim=1,
+                )
