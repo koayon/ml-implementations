@@ -1,23 +1,17 @@
 import collections
-import token
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, OrderedDict, Protocol, Tuple
+from typing import OrderedDict, Tuple
 
-import numpy as np
-import pandas as pd
-import plotly.express as px
 import tiktoken
 import torch as t
 from einops import rearrange, repeat
-from jaxtyping import Float, Int
+from jaxtyping import Float
 from tensorboardX import SummaryWriter
 from torch import nn
-from torch.distributions.categorical import Categorical
-from torch.nn import parallel
 
 from alibi.transformer_block import ALiBiTransformerBlock
+from general.norms import RMSNorm
 from helpers import einsum, remove_hooks
-from mixture_of_experts.cache import MoEFullCache, MoELayerCache
+from mixture_of_experts.cache import MoEFullCache
 from moet_experiment.moe_blocks import MoETBlock
 from moet_experiment.moet_config import MoETConfig
 
@@ -94,7 +88,7 @@ class MoET(nn.Module):
         #     config.max_position_embeddings, config.hidden_size
         # )
         self.sequential_layers = nn.Sequential(layers)
-        self.final_norm = nn.LayerNorm([config.hidden_size])
+        self.final_norm = RMSNorm(shape_without_batch=(config.hidden_size,))
         self.cache = MoEFullCache({})
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
@@ -135,6 +129,7 @@ class MoET(nn.Module):
 def main():
     model = MoET()
     print(model)
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad))
 
 
 if __name__ == "__main__":

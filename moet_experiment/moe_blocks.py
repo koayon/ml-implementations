@@ -4,6 +4,7 @@ import torch as t
 from torch import nn
 
 from alibi.attention import AlibiUnidirectionalAttention
+from general.norms import RMSNorm
 from mixture_of_experts.cache import MoELayerCache
 from moet_experiment.group_moe_layer import GroupExpertChoiceMoELayer
 from moet_experiment.moet_config import MoETConfig
@@ -12,6 +13,8 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 
 class MoETBlock(nn.Module):
+    norm: nn.Module
+
     def __init__(
         self,
         *,
@@ -21,11 +24,15 @@ class MoETBlock(nn.Module):
         group_size: int,
         layer_id: str,
         router_str: str,
+        norm_str: str = "rms",
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.ln1 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
+        if norm_str == "rms":
+            self.norm1 = RMSNorm(shape_without_batch=(config.hidden_size,))
+        else:
+            self.norm1 = nn.LayerNorm(config.hidden_size)
 
         self.attention_layer = AlibiUnidirectionalAttention(
             hidden_size=config.hidden_size,
@@ -33,7 +40,10 @@ class MoETBlock(nn.Module):
             dropout=config.attn_dropout,
         )
 
-        self.ln2 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
+        if norm_str == "rms":
+            self.norm2 = RMSNorm(shape_without_batch=(config.hidden_size,))
+        else:
+            self.norm2 = nn.LayerNorm(config.hidden_size)
 
         self.expert_layer = GroupExpertChoiceMoELayer(
             num_experts=num_experts,
@@ -58,10 +68,10 @@ class MoETBlock(nn.Module):
         """
         # Using PreNorm from GPT-3 paper (Brown et al)
 
-        y, _attn_cache = self.attention_layer(self.ln1(x))
+        y, _attn_cache = self.attention_layer(self.norm1(x))
         x = x + y
 
-        x = self.ln2(x)
+        x = self.norm2(x)
 
         y, moe_layer_cache = self.expert_layer(x)
 
