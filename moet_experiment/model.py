@@ -7,16 +7,25 @@ from einops import rearrange, repeat
 from jaxtyping import Float
 from tensorboardX import SummaryWriter
 from torch import nn
+from transformers import AutoTokenizer
 
 from alibi.transformer_block import ALiBiTransformerBlock
 from general.norms import RMSNorm
-from helpers import einsum, remove_hooks
+from helpers import (
+    einsum,
+    get_param_count_dict,
+    remove_hooks,
+    tiny_stories_true_parameter_count,
+)
 from mixture_of_experts.cache import MoEFullCache
 from moet_experiment.moe_blocks import MoETBlock
 from moet_experiment.moet_config import MoETConfig
 
 config = MoETConfig()
-tokeniser = tiktoken.encoding_for_model(config.tokeniser_string)
+# tokeniser = tiktoken.encoding_for_model(config.tokeniser_string)
+# Use the tokenizer from the TinyStories models
+# Note using this tokenizer we only see the top 10K tokens. Hence the embedding matrix is only 10K x hidden_size really, even though it looks larger and we need to take this into account when counting parameters.
+tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
 
 class MoET(nn.Module):
@@ -129,8 +138,19 @@ class MoET(nn.Module):
 
 def main():
     model = MoET()
-    print(model)
-    print(sum(p.numel() for p in model.parameters() if p.requires_grad))
+    # print(model)
+    # print(tiny_stories_true_parameter_count(model, config.hidden_size))
+    # print(get_param_count_dict(model).head(10))
+
+    # Test model
+    input_str = "Hello world"
+    tokens_list = tokenizer(input_str)["input_ids"]
+    tokens = t.tensor(tokens_list).unsqueeze(0)  # batch seq
+
+    print(tokens.shape)
+    out, moe_cache = model(tokens)
+    print(out.shape)
+    print(out)
 
 
 if __name__ == "__main__":
