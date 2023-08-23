@@ -55,7 +55,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
         self.router_str = router_str
-        self.router_noise_scale = config.router_noise_scale
+        self.router_temperature = config.router_temperature
 
         if router_str in ("linear", "learned"):
             self.router = nn.Linear(self.hidden_size, self.num_experts, device=device)
@@ -176,11 +176,13 @@ class GroupExpertChoiceMoELayer(nn.Module):
             assert input_tokens is not None
 
             input_tokens = rearrange(input_tokens, "b s -> (b s)")
-            h = self.routing_dropout(self.router(input_tokens))  # bs num_experts
+            clean_h = self.routing_dropout(self.router(input_tokens))  # bs num_experts
         else:
-            h = self.routing_dropout(self.router(x))  # bs num_experts
-            # Add noise to the routing logits
-            h += t.randn_like(h) * self.router_noise_scale
+            clean_h = self.routing_dropout(self.router(x))  # bs num_experts
+
+        # Add gumbel noise to the routing logits to encourage exploration
+        gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
+        h = (clean_h + gumbel_noise) / self.router_temperature
 
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
