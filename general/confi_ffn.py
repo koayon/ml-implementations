@@ -4,8 +4,9 @@ import torch.nn as nn
 from helpers import ACTIVATION_FUNCTIONS, einsum
 
 
-class SigmoidFFN(nn.Module):
-    """Sigmoid FFN reminiscient of the Highway Network of Srivastava et al (at least for the inner strength component)
+class ConfiFFN(nn.Module):
+    """ConfiFFN reminiscient of the Highway Network of Srivastava et al (at least for the inner strength component).
+    Previously referred to as SigmoidFFN.
 
     This approach takes advantage of modern activation functions and better defaults.
     It also always preserves the residual stream rather than possibly wiping it out (as in the case T = 0, C = 1 in the Highway Network approach). This is much more stable for large networks. Here we only affect how much is _written_ to the residual stream.
