@@ -3,6 +3,7 @@ from typing import Any, Optional
 import torch as t
 from jaxtyping import Int
 from torch import nn
+from torch.nn.functional import one_hot
 
 from mixture_of_experts.config import MoEConfig
 from moet_experiment.moet_config import MoETConfig
@@ -25,14 +26,16 @@ class HashRouter(nn.Module):
         self.vocab_size = config.vocab_size
         self.k = k
 
-    def forward(
-        self, input: Int[t.Tensor, "batch seq"]
-    ) -> Int[t.Tensor, "batch seq k"]:
+    def forward(self, input: Int[t.Tensor, "bs"]) -> Int[t.Tensor, "bs k"]:
         "Takes in token ids and a hashing function and returns the expert num that each token should be assigned to."
-        hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of seq, batch
+        hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of bs
 
-        out = t.stack(hashes, dim=-1)  # batch, seq, k
-        return out  # batch, seq, k
+        top_k = t.stack(hashes, dim=-1)  # bs, k
+        top_k_one_hot = one_hot(
+            top_k, num_classes=self.num_experts
+        )  # bs, k, num_experts
+        out = t.max(top_k_one_hot, dim=1)  # bs, num_experts
+        return out  # bs, num_experts
 
     def build_random_hash(self, seed: int = 42):
         """Randomly assigns each token in vocabularly to k experts.
