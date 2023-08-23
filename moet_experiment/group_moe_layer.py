@@ -25,6 +25,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
     experts: nn.ModuleList
     up_experts: list[nn.Module]
     down_experts: list[nn.Module]
+    router: nn.Module
 
     def __init__(
         self,
@@ -53,6 +54,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
         self.layer_id = layer_id
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
+        self.router_str = router_str
 
         if router_str in ("linear", "learned"):
             self.router = nn.Linear(self.hidden_size, self.num_experts, device=device)
@@ -143,11 +145,14 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
         return x_out
 
-    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoELayerCache]:
+    def forward(
+        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
+    ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         Args:
             x: batch seq hidden_size
             router: hidden_size num_experts
+            input_tokens: batch seq, the original input tokens
 
         Returns:
             x: batch, seq, hidden_size
@@ -162,13 +167,17 @@ class GroupExpertChoiceMoELayer(nn.Module):
             pass
 
         # If there aren't enough tokens in the input to select top k, reduce k
-        # self.k = min(int(self.k), (batch_dim * seq_length))
-        self.k = 4
+        self.k = min(int(self.k), (batch_dim * seq_length))
+        # self.k = 4
 
         x = rearrange(x, "b s h -> (b s) h")
-        h = self.routing_dropout(self.router(x))  # bs num_experts
+        if self.router_str == "hash":
+            assert input_tokens is not None
 
-        # Calculate router score or Gate Value.
+            input_tokens = rearrange(input_tokens, "b s -> (b s)")
+            h = self.routing_dropout(self.router(input_tokens))  # bs num_experts
+        else:
+            h = self.routing_dropout(self.router(x))  # bs num_experts
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
