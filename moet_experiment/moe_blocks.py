@@ -61,7 +61,7 @@ class MoETBlock(nn.Module):
             )
 
     def forward(
-        self, x: t.Tensor, input_tokens: t.Tensor
+        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
     ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         x: batch seq hidden_size
@@ -75,7 +75,7 @@ class MoETBlock(nn.Module):
 
         x = self.norm2(x)
 
-        y, moe_layer_cache = self.expert_layer(x=x, input=input_tokens)
+        y, moe_layer_cache = self.expert_layer(x=x, input_tokens=input_tokens)
 
         if hasattr(self, "parallel_ffn"):
             y = y + self.parallel_ffn(y)
