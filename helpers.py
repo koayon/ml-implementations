@@ -118,3 +118,29 @@ def get_param_count_dict(model: nn.Module) -> pd.DataFrame:
         by="param_count", ascending=False
     )
     return df
+
+
+def tiny_stories_true_parameter_count(model: nn.Module, hidden_size: int):
+    """For Tiny Stories models due to the lower vocab size and sequence length, we need to adjust the parameter count.
+
+    Parameters
+    ----------
+    model : nn.Module
+        PyTorch model
+    hidden_size : int
+        Hidden dimension size
+
+    Returns
+    -------
+    int
+        True parameter count
+    """
+    VOCAB_SIZE = 50257
+    TRUE_VOCAB_SIZE = 10000
+    POS_SIZE = 2048
+    SEQ_LEN = 256
+
+    total_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    unused_embedding_count = (VOCAB_SIZE - TRUE_VOCAB_SIZE) * hidden_size
+    unused_positional_embedding_count = (POS_SIZE - SEQ_LEN) * hidden_size
+    return total_count - unused_embedding_count - unused_positional_embedding_count
