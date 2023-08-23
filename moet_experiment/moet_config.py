@@ -9,6 +9,7 @@ class MoETConfig:
     # Model
     tokeniser_string: str = "gpt2"
     activation_function: str = "silu"
+    confi_mlp: bool = False
 
     num_total_layers: int = 8
     num_early_layers: int = 4
