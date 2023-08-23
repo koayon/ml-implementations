@@ -34,7 +34,8 @@ class HashRouter(nn.Module):
         top_k_one_hot = one_hot(
             top_k, num_classes=self.num_experts
         )  # bs, k, num_experts
-        out = t.max(top_k_one_hot, dim=1)  # bs, num_experts
+        out, _indices = t.max(top_k_one_hot, dim=1)  # bs, num_experts
+
         return out  # bs, num_experts
 
     def build_random_hash(self, seed: int = 42):
@@ -70,3 +71,14 @@ class HashRouter(nn.Module):
             Hash function that maps tokens to k experts.
         """
         raise NotImplementedError
+
+
+def main():
+    hash_router = HashRouter(k=1, num_experts=2)
+    hash_router.build_random_hash()
+    print(hash_router.hash)
+    print(hash_router.forward(t.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])))
+
+
+if __name__ == "__main__":
+    main()
