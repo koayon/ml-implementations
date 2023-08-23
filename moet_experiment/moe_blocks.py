@@ -60,7 +60,9 @@ class MoETBlock(nn.Module):
                 nn.Linear(config.hidden_size * 4, config.hidden_size),
             )
 
-    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoELayerCache]:
+    def forward(
+        self, x: t.Tensor, input_tokens: t.Tensor
+    ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         x: batch seq hidden_size
 
@@ -73,7 +75,7 @@ class MoETBlock(nn.Module):
 
         x = self.norm2(x)
 
-        y, moe_layer_cache = self.expert_layer(x)
+        y, moe_layer_cache = self.expert_layer(x=x, input=input_tokens)
 
         if hasattr(self, "parallel_ffn"):
             y = y + self.parallel_ffn(y)
