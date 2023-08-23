@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional, Protocol, Tuple, Union
 
 import fancy_einsum
 import joblib
+import pandas as pd
 import requests
 import torch as t
 import transformers
@@ -90,3 +91,30 @@ def einsum(equation: str, *operands) -> t.Tensor:
     t.Tensor
     """
     return t.Tensor(fancy_einsum.einsum(equation, *operands))
+
+
+def get_param_count_dict(model: nn.Module) -> pd.DataFrame:
+    """Given a model return a dataframe with the layer names and counts.
+
+    Parameters
+    ----------
+    model : nn.Module
+        PyTorch model
+
+    Returns
+    -------
+    pd.DataFrame
+        layer name and parameter counts with the total (descending order)
+    """
+    names = []
+    param_counts = []
+    for name, p in model.named_parameters():
+        if p.requires_grad:
+            names.append(name)
+            param_counts.append(p.numel())
+    names.append("Total")
+    param_counts.append(sum(param_counts))
+    df = pd.DataFrame({"name": names, "param_count": param_counts}).sort_values(
+        by="param_count", ascending=False
+    )
+    return df
