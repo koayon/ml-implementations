@@ -176,9 +176,11 @@ class GroupExpertChoiceMoELayer(nn.Module):
             assert input_tokens is not None
 
             input_tokens = rearrange(input_tokens, "b s -> (b s)")
-            clean_h = self.routing_dropout(self.router(input_tokens))  # bs num_experts
+            clean_h = self.router(input_tokens).float()  # bs num_experts
+            clean_h = self.routing_dropout(clean_h)  # bs num_experts
         else:
-            clean_h = self.routing_dropout(self.router(x))  # bs num_experts
+            clean_h = self.router(x).float()  # bs num_experts
+            clean_h = self.routing_dropout(clean_h)  # bs num_experts
 
         # Add gumbel noise to the routing logits to encourage exploration
         gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
