@@ -138,7 +138,7 @@ class TinyStoriesDataset(IterableDataset):
                 # open the dataset for reading but keep it on disk with memmap
                 m = np.memmap(shard, dtype=np.uint16, mode="r")
                 num_batches = len(m) // self.max_seq_len
-                print(f"Shard {shard} has {num_batches} batches.")
+                # print(f"Shard {shard} has {num_batches} batches.")
                 num_batches -= 1  # drop the last partial batch
                 assert num_batches > 0, "this shard is way too small? investigate."
                 ixs = list(range(num_batches))

@@ -72,6 +72,7 @@ class Trainer:
         self,
         config: MoEConfig | MoETConfig,
         model: nn.Module,
+        model_name: str,
         optimiser_string: str = "adam",
         max_iters: Optional[int] = None,
     ):
@@ -81,6 +82,7 @@ class Trainer:
         self.Optimiser = OPTIMISERS[optimiser_string]
         if max_iters:
             self.config.max_iters = max_iters
+        self.model_name = model_name
 
     def get_text_data(
         self,
@@ -248,7 +250,7 @@ class Trainer:
         best_loss = float("inf")
         sample_batch_num = 0
 
-        wandb.init(project="moe")
+        wandb.init(project=self.model_name)
         wandb_config = wandb.config
         wandb.watch(model)
 
@@ -279,19 +281,17 @@ class Trainer:
                 if sample_batch_num > self.config.max_iters:
                     checkpoint = {
                         "model": model.state_dict(),
-                        # "optimizer": optimiser.state_dict(),
+                        "optimizer": optimiser.state_dict(),
                         "model_config": self.config,
                         "iter_num": -1,
                         "best_val_loss": best_loss,
                     }
                     self.save_model(
                         checkpoint=checkpoint,
-                        model_name="moe_post_training",
+                        model_name=f"{self.model_name}post_training",
                     )
                     break
-                print(
-                    f"\n\nSample batch num: {sample_batch_num}/{self.config.max_iters}"
-                )
+                print(f"Sample batch num: {sample_batch_num}/{self.config.max_iters}")
 
                 if sample_batch_num % self.config.eval_steps == 0:
                     # Evaluate model
@@ -324,7 +324,7 @@ class Trainer:
                             break
                     test_loss /= num_batches
                     print(
-                        f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
+                        f"-----\nEpoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}\n-----"
                     )
                     # Log to wandb
                     wandb.log(
@@ -341,14 +341,14 @@ class Trainer:
                         best_loss = test_loss
                         checkpoint = {
                             "model": model.state_dict(),
-                            # "optimizer": optimiser.state_dict(),
+                            "optimizer": optimiser.state_dict(),
                             "model_config": self.config,
                             "iter_num": sample_batch_num,
                             "best_val_loss": best_loss,
                         }
                         self.save_model(
                             checkpoint=checkpoint,
-                            model_name="moe_checkpoint",
+                            model_name=f"{self.model_name}_checkpoint",
                         )
                         print(f"New best loss: {best_loss}. Checkpoint saved")
 
@@ -371,6 +371,7 @@ class Trainer:
         checkpoint = t.load(checkpoint_path)
 
         self.model.load_state_dict(checkpoint["model"])
+        self.optimiser.load_state_dict(checkpoint["optimizer"])
 
         print(f"Loaded model from {checkpoint_path}")
         print(
@@ -385,15 +386,18 @@ class Trainer:
 
 def main():
     # Set up the trainer
-    trainer = Trainer(model=MoET(), config=MoETConfig(), max_iters=5)
+    trainer = Trainer(
+        model=MoET(), config=MoETConfig(), max_iters=100, model_name="moet"
+    )
 
     # Train and save the model
-    trainer.model = trainer.train()
+    trainer.model = trainer.train(data_source="tiny_stories")
 
     # print(trainer.count_parameters)
 
     # Load model
-    # model = trainer.load_model("models/moe_checkpoint_2023-08-03_00:42:23.pt")
+    model_filepath = ...
+    # model = trainer.load_model("models/{model_filepath}")
 
     # next_token = sample_next_token(
     #     input="One day, I went to meet my friend Jill. She has brown hair and",
