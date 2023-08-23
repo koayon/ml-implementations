@@ -8,7 +8,7 @@ class MoETConfig:
 
     # Model
     tokeniser_string: str = "gpt2"
-    activation_function: str = "gelu"
+    activation_function: str = "silu"
 
     num_total_layers: int = 8
     num_early_layers: int = 4
@@ -19,7 +19,7 @@ class MoETConfig:
 
     num_attn_heads: int = 8
 
-    hidden_size: int = 256
+    hidden_size: int = 512
     vocab_size: int = 50257
     max_position_embeddings: int = 256
 
