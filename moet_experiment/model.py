@@ -18,6 +18,7 @@ from helpers import (
     tiny_stories_true_parameter_count,
 )
 from mixture_of_experts.cache import MoEFullCache
+from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
 from moet_experiment.moe_blocks import MoETBlock
 from moet_experiment.moet_config import MoETConfig
 
@@ -49,6 +50,11 @@ class MoET(nn.Module):
 
         layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
 
+        if config.confi_mlp:
+            T_Block = ALiBiConfiTBlock
+        else:
+            T_Block = ALiBiTransformerBlock
+
         layers["moe_block_hash0"] = MoETBlock(
             config=config,
             layer_id=f"moe_layer_hash0",
@@ -68,7 +74,7 @@ class MoET(nn.Module):
                     router_str="learned",
                 )
             else:
-                layers[f"transformer_block{i}"] = ALiBiTransformerBlock(
+                layers[f"transformer_block{i}"] = T_Block(
                     layer_index=i,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
@@ -85,7 +91,7 @@ class MoET(nn.Module):
                     router_str="learned",
                 )
             else:
-                layers[f"transformer_block{i}"] = ALiBiTransformerBlock(
+                layers[f"transformer_block{i}"] = T_Block(
                     layer_index=i,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
@@ -148,7 +154,7 @@ def main():
     tokens = t.tensor(tokens_list).unsqueeze(0)  # batch seq
 
     print(tokens.shape)
-    out, moe_cache = model(tokens)
+    out, _moe_cache = model(tokens)
     print(out.shape)
     print(out)
 
