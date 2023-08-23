@@ -20,19 +20,21 @@ from mixture_of_experts.cache import MoEFullCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer, sample_next_token
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
+from moet_experiment.model import MoET
+from moet_experiment.moet_config import MoETConfig
 from optimisers.adam import Adam
 from optimisers.sgd import SGD
 from optimisers.sophia import Sophia
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
-config = MoEConfig()
+# config = MoEConfig()
 
 OPTIMISERS = {
-    "adam": Adam,
-    "sgd": SGD,
-    "sophia": Sophia,
-    "pytorch-adam": t.optim.Adam,
+    "my_adam": Adam,
+    "my_sgd": SGD,
+    "my_sophia": Sophia,
+    "adam": t.optim.Adam,
 }
 
 
@@ -68,9 +70,9 @@ class Trainer:
 
     def __init__(
         self,
-        model: nn.Module = SparseMoETransformer(),
+        config: MoEConfig | MoETConfig,
+        model: nn.Module,
         optimiser_string: str = "adam",
-        config: MoEConfig = config,
         max_iters: Optional[int] = None,
     ):
         self.model = model
@@ -383,12 +385,12 @@ class Trainer:
 
 def main():
     # Set up the trainer
-    trainer = Trainer(model=SparseMoETransformer(), max_iters=1000)
+    trainer = Trainer(model=MoET(), config=MoETConfig(), max_iters=5)
 
     # Train and save the model
-    # trainer.model = trainer.train()
+    trainer.model = trainer.train()
 
-    print(trainer.count_parameters)
+    # print(trainer.count_parameters)
 
     # Load model
     # model = trainer.load_model("models/moe_checkpoint_2023-08-03_00:42:23.pt")
