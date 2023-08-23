@@ -10,7 +10,7 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
-from alibi.transformer_block import GPT2Block
+from alibi.transformer_block import ALiBiTransformerBlock
 from gpt.config import GPTConfig
 from gpt.model import FullKeyValueCache
 from helpers import einsum
@@ -46,13 +46,12 @@ class AlibiGPT(nn.Module):
 
         self.blocks = nn.ModuleList(
             [
-                GPT2Block(
+                ALiBiTransformerBlock(
                     layer_index=index,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_heads,
-                    dropout=config.dropout,
+                    attn_dropout=config.dropout,
                     layer_norm_epsilon=config.layer_norm_epsilon,
-                    activation_function=config.activation_function,
                 )
                 for index in range(config.num_layers)
             ]
