@@ -1,7 +1,11 @@
 import torch as t
 import torch.nn as nn
+from regex import R
 
 from helpers import ACTIVATION_FUNCTIONS, einsum
+
+MULT = 4
+RATIO = 2 / 3
 
 
 class ConfiFFN(nn.Module):
@@ -46,9 +50,11 @@ class ConfiFFN(nn.Module):
         # Default strengths to 1
         t.nn.init.constant_(self.strength.weight, initial_strength_value)
 
-        self.linear1 = nn.Linear(hidden_size, hidden_size * 4)
+        up_dim = int(hidden_size * MULT * RATIO)
+
+        self.linear1 = nn.Linear(hidden_size, up_dim)
         self.nonlinearity = ACTIVATION_FUNCTIONS[activation_function]
-        self.linear2 = nn.Linear(hidden_size * 4, hidden_size)
+        self.linear2 = nn.Linear(up_dim, hidden_size)
 
         self.ffn_dropout = nn.Dropout(dropout)
         self.strength_dropout = nn.Dropout(strength_dropout)
@@ -63,7 +69,7 @@ class ConfiFFN(nn.Module):
             self.linear2(self.nonlinearity(self.linear1(x)))
         )  # (batch, seq, hidden_size)
 
-        strength_logits = self.strength(x)  # (batch, seq, 1)
+        strength_logits = self.strength(t.concat([x, y], dim=-1))  # (batch, seq, 1)
         strength = t.sigmoid(strength_logits / self.alpha)  # (batch, seq, 1)
         # If dropout instead of default dropping the layer, we default to using the layer with the 1 - prob
         strength = 1 - self.strength_dropout(strength)  # (batch, seq, 1)
