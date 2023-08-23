@@ -7,36 +7,32 @@ from einops import rearrange
 from torch import nn
 from transformers.activations import NewGELUActivation
 
-from alibi.attention import AlibiUnidirectionalAttention as UnidirectionalAttention
+from alibi.attention import AlibiUnidirectionalAttention
+from general.swiglu_ffn import SwiGLUFFN
 from helpers import einsum
 
-ACTIVATION_FUNCTIONS = dict(
-    relu=nn.ReLU(),
-    gelu=nn.GELU(),
-    new_gelu=NewGELUActivation(),
-)
 
-
-class GPT2Block(nn.Module):
+class ALiBiTransformerBlock(nn.Module):
     """
-    GPT2Block is a transformer block with a unidirectional attention layer.
-    Based on OpenAI's GPT-2 implementation.
+    ALiBiTransformerBlock is a transformer block with a unidirectional attention layer.
+    Based on OpenAI's GPT-2 implementation and the ALiBi paper (Train Short, Test Long)
+    We're using SwiGLU for the MLP part.
     """
 
-    attn: UnidirectionalAttention
-    linear1: nn.Linear
-    linear2: nn.Linear
+    attn: AlibiUnidirectionalAttention
+    mlp: nn.Module
     ln1: nn.LayerNorm
     ln2: nn.LayerNorm
 
     def __init__(
         self,
+        *,
         layer_index: int,
-        hidden_size: int = 768,
-        num_heads: int = 12,
-        dropout: float = 0.1,
+        hidden_size: int,
+        num_heads: int,
+        attn_dropout: float = 0.1,
+        mlp_dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
-        activation_function: str = "new_gelu",
     ):
         super().__init__()
 
@@ -45,21 +41,14 @@ class GPT2Block(nn.Module):
         # Attention part
 
         self.ln1 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-        self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
+        self.attn = AlibiUnidirectionalAttention(
+            hidden_size=hidden_size, num_heads=num_heads, dropout=attn_dropout
+        )
 
         # MLP part
 
-        self.MLP = nn.Sequential(
-            OrderedDict(
-                [
-                    ("ln2", nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)),
-                    ("linear1", nn.Linear(hidden_size, hidden_size * 4)),
-                    ("activation_function", ACTIVATION_FUNCTIONS[activation_function]),
-                    ("linear2", nn.Linear(hidden_size * 4, hidden_size)),
-                    ("dropout", nn.Dropout(dropout)),
-                ]
-            )
-        )
+        self.ln2 = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        self.MLP = SwiGLUFFN(in_features=hidden_size, dropout=mlp_dropout)
 
     def forward(self, x: t.Tensor, layer_cache=None) -> Tuple[t.Tensor, Any]:
         """
@@ -79,7 +68,7 @@ class GPT2Block(nn.Module):
 
 if __name__ == "__main__":
     # Test GPT2Block
-    block = GPT2Block(layer_index=0)
+    block = ALiBiTransformerBlock(layer_index=0, hidden_size=16, num_heads=4)
     x = t.rand(2, 10, 768)
     y = block(x)
     print(y.shape)
