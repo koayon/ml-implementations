@@ -1,13 +1,19 @@
 import math
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import torch as t
 from einops import rearrange, repeat
 from torch import nn
 from torch.nn import functional as F
 
+from gpt.cached_attention import AttentionCache
 from helpers import einsum
+
+# from mixture_of_experts.config import MoEConfig
+# from moet_experiment.moet_config import MoETConfig
+
+# config = MoETConfig()
 
 
 class AlibiUnidirectionalAttention(nn.Module):
@@ -24,6 +30,8 @@ class AlibiUnidirectionalAttention(nn.Module):
 
     def __init__(
         self,
+        *,
+        # config: MoETConfig,
         hidden_size: int,
         num_heads: int,
         head_size: Optional[int] = None,
@@ -32,25 +40,25 @@ class AlibiUnidirectionalAttention(nn.Module):
     ):
         super().__init__()
         self.hidden_size = hidden_size
-        assert hidden_size % num_heads == 0
-
         self.num_heads = num_heads
-        self.head_size = hidden_size // num_heads if head_size is None else head_size
+        assert self.hidden_size % self.num_heads == 0
+
+        self.head_size = self.hidden_size // self.num_heads
 
         self.qkv_proj = nn.Linear(
-            hidden_size, (self.num_heads * self.head_size) * 3
+            self.hidden_size, (self.num_heads * self.head_size) * 3
         )  # W_qkv
         self.output_proj = nn.Linear(
-            (self.num_heads * self.head_size), hidden_size
+            (self.num_heads * self.head_size), self.hidden_size
         )  # W_O
 
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
-        if num_heads <= 8:
-            self.m_list = [1 / (2**i) for i in range(num_heads)]
+        if self.num_heads <= 8:
+            self.m_list = [1 / (2**i) for i in range(self.num_heads)]
         else:
-            self.m_list = [1 / (2 ** (i / 2)) for i in range(num_heads)]
+            self.m_list = [1 / (2 ** (i / 2)) for i in range(self.num_heads)]
 
     @lru_cache
     def regular_mask(self, seq_length: int) -> t.Tensor:
@@ -121,7 +129,7 @@ class AlibiUnidirectionalAttention(nn.Module):
             F.softmax(masked_attention_scores, dim=-1)
         )  # seq, seq
 
-        print(attn_matrix)
+        # print(attn_matrix)
 
         # For each query vector, combine with the weighted average value vector
         combined_with_v = einsum(
@@ -138,11 +146,13 @@ class AlibiUnidirectionalAttention(nn.Module):
 
         return out
 
+        # TODO: Cache KV Cache for inference!
+
 
 if __name__ == "__main__":
-    attention = AlibiUnidirectionalAttention(16, 8)
-    x = t.randn(1, 5, 16)
-    out = attention(x)
+    attention = AlibiUnidirectionalAttention(hidden_size=16, num_heads=4)
+    # x = t.randn(1, 5, 16)
+    # out = attention(x)
     # print(out)
     # print(out.shape)
     # print(get_alibi_mask(5))
