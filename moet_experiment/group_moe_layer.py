@@ -55,6 +55,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
         self.router_str = router_str
+        self.router_noise_scale = config.router_noise_scale
 
         if router_str in ("linear", "learned"):
             self.router = nn.Linear(self.hidden_size, self.num_experts, device=device)
@@ -178,6 +179,9 @@ class GroupExpertChoiceMoELayer(nn.Module):
             h = self.routing_dropout(self.router(input_tokens))  # bs num_experts
         else:
             h = self.routing_dropout(self.router(x))  # bs num_experts
+            # Add noise to the routing logits
+            h += t.randn_like(h) * self.router_noise_scale
+
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 

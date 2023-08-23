@@ -28,6 +28,8 @@ class MoETConfig:
     routing_dropout: float = 0.1
     resid_dropout: float = 0.1
 
+    router_noise_scale: float = 0.1
+
     layer_norm_epsilon: float = 1e-05
     train_capacity_factor: float = 1.25
     eval_capacity_factor: float = 2.0
