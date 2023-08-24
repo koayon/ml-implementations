@@ -1,10 +1,12 @@
 from datetime import datetime
+from functools import lru_cache
 from typing import Callable, Optional, Tuple
 
 import tiktoken
 import torch as t
 import torch.nn as nn
 from einops import rearrange, repeat
+from torch import optim
 from torch.distributions.categorical import Categorical
 from torch.nn import functional as F
 from torch.optim import Optimizer
@@ -75,6 +77,7 @@ class Trainer:
         model_name: str,
         optimiser_string: str = "adam",
         max_iters: Optional[int] = None,
+        model_load_path: Optional[str] = None,
     ):
         self.model = model
         self.config = config
@@ -83,7 +86,10 @@ class Trainer:
         if max_iters:
             self.config.max_iters = max_iters
         self.model_name = model_name
+        if model_load_path:
+            _model, self.optimiser = self.load_model(model_load_path)
 
+    @lru_cache
     def get_text_data(
         self,
         data_source: str = "data/tiny_shakespeare.txt",
@@ -105,6 +111,7 @@ class Trainer:
 
         return train_data, test_data  # vectors of ints
 
+    @lru_cache
     def dataset_to_dataloader(
         self, dataset: Dataset, random_sampler: bool
     ) -> DataLoader:
@@ -119,6 +126,7 @@ class Trainer:
             num_workers=0,
         )
 
+    @lru_cache
     def get_tiny_stories_dataloaders(self) -> Tuple[DataLoader, DataLoader]:
         train_dataset = TinyStoriesDataset(
             split="train", max_seq_len=self.config.block_size
@@ -137,6 +145,7 @@ class Trainer:
         # print(y.shape)
         return train_dataloader, test_dataloader
 
+    @lru_cache
     def get_tiny_shakespeare_dataset(self) -> Tuple[DataLoader, DataLoader]:
         # Get dataset
         train_data, test_data = self.get_text_data()
@@ -225,7 +234,9 @@ class Trainer:
 
         return loss.item()
 
-    def train(self, data_source: str = "tiny_stories") -> nn.Module:
+    def train(
+        self, data_source: str = "tiny_stories", optimiser: Optional[Optimizer] = None
+    ) -> nn.Module:
         """Train the model on the data source."""
 
         # Print config and model parameters
@@ -244,7 +255,7 @@ class Trainer:
         # t.autograd.set_detect_anomaly(True)
 
         model = self.model.to(device)
-        optimiser: Optimizer = self.Optimiser(
+        optimiser = optimiser or self.Optimiser(
             model.parameters(), lr=self.config.learning_rate
         )
         best_loss = float("inf")
@@ -288,7 +299,7 @@ class Trainer:
                     }
                     self.save_model(
                         checkpoint=checkpoint,
-                        model_name=f"{self.model_name}post_training",
+                        model_name=f"{self.model_name}/post_training",
                     )
                     break
                 print(f"Sample batch num: {sample_batch_num}/{self.config.max_iters}")
@@ -348,7 +359,7 @@ class Trainer:
                         }
                         self.save_model(
                             checkpoint=checkpoint,
-                            model_name=f"{self.model_name}_checkpoint",
+                            model_name=f"{self.model_name}/checkpoint_{sample_batch_num}",
                         )
                         print(f"New best loss: {best_loss}. Checkpoint saved")
 
@@ -365,19 +376,23 @@ class Trainer:
 
         print(f"Saved model to {full_dest}")
 
-    def load_model(self, checkpoint_path: str) -> nn.Module:
+    def load_model(self, checkpoint_path: str) -> Tuple[nn.Module, Optimizer]:
         """Load a model from the checkpoint."""
 
         checkpoint = t.load(checkpoint_path)
 
         self.model.load_state_dict(checkpoint["model"])
-        self.optimiser.load_state_dict(checkpoint["optimizer"])
+
+        optimiser = self.Optimiser(
+            self.model.parameters(), lr=self.config.learning_rate
+        )
+        optimiser.load_state_dict(checkpoint["optimizer"])
 
         print(f"Loaded model from {checkpoint_path}")
         print(
             f"Best val loss: {checkpoint['best_val_loss']} for iter {checkpoint['iter_num']}"
         )
-        return self.model
+        return self.model, optimiser
 
     @property
     def count_parameters(self) -> int:
@@ -387,7 +402,11 @@ class Trainer:
 def main():
     # Set up the trainer
     trainer = Trainer(
-        model=MoET(), config=MoETConfig(), max_iters=100, model_name="moet"
+        model=MoET(),
+        config=MoETConfig(),
+        max_iters=1000,
+        model_name="moet",
+        model_load_path="models/moetpost_training_2023-08-23.pt",
     )
 
     # Train and save the model
