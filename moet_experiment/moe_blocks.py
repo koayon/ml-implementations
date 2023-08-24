@@ -4,6 +4,7 @@ import torch as t
 from torch import nn
 
 from alibi.attention import AlibiUnidirectionalAttention
+from general.basic_ffn import FFN
 from general.norms import RMSNorm
 from mixture_of_experts.cache import MoELayerCache
 from moet_experiment.group_moe_layer import GroupExpertChoiceMoELayer
@@ -54,10 +55,10 @@ class MoETBlock(nn.Module):
         )
 
         if parallel_ffn:
-            self.parallel_ffn = nn.Sequential(
-                nn.Linear(config.hidden_size, config.hidden_size * 4),
-                nn.SiLU(),
-                nn.Linear(config.hidden_size * 4, config.hidden_size),
+            self.parallel_ffn = FFN(
+                hidden_size=config.hidden_size,
+                dropout=0,
+                activation_function=config.activation_function,
             )
 
     def forward(
