@@ -11,12 +11,8 @@ from transformers import AutoTokenizer
 
 from alibi.transformer_block import ALiBiTransformerBlock
 from general.norms import RMSNorm
-from helpers import (
-    einsum,
-    get_param_count_dict,
-    remove_hooks,
-    tiny_stories_true_parameter_count,
-)
+from helpers import einsum, get_param_count_dict, tiny_stories_true_parameter_count
+from hooks import remove_hooks
 from mixture_of_experts.cache import MoEFullCache
 from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
 from moet_experiment.moe_blocks import MoETBlock

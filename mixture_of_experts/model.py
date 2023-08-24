@@ -15,7 +15,8 @@ from torch import nn
 from torch.distributions.categorical import Categorical
 
 from gpt.transformer_block import GPT2Block
-from helpers import einsum, remove_hooks
+from helpers import einsum
+from hooks import remove_hooks
 from mixture_of_experts.cache import MoEFullCache, MoELayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock

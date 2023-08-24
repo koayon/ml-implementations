@@ -1,19 +1,13 @@
-import http
-import logging
-import os
 import tempfile
 import time
 from functools import wraps
-from typing import Any, Callable, Optional, Protocol, Tuple, Union
 
 import fancy_einsum
 import joblib
 import pandas as pd
-import requests
 import torch as t
 import transformers
 from torch import nn
-from transformers.models.bert.modeling_bert import BertForMaskedLM
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 
 mem = joblib.Memory(tempfile.gettempdir() + "/joblib_cache")
@@ -58,16 +52,6 @@ def allclose(actual: t.Tensor, expected: t.Tensor, rtol=1e-4) -> bool:
         )
     print(f"Test passed with max absolute deviation of {left.max()}")
     return True
-
-
-def remove_hooks(module: t.nn.Module) -> None:
-    """Remove all hooks from module.
-
-    Use module.apply(remove_hooks) to do this recursively.
-    """
-    module._backward_hooks.clear()
-    module._forward_hooks.clear()
-    module._forward_pre_hooks.clear()
 
 
 def check_leaf_nodes(model: nn.Module) -> dict[str, bool]:
