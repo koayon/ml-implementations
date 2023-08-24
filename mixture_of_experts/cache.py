@@ -35,7 +35,10 @@ class MoEFullCache(Dict[str, MoELayerCache]):
 
     def __setitem__(self, idx: str, cache: MoELayerCache) -> None:
         assert isinstance(cache, MoELayerCache)
-        return super().__setitem__(idx, cache)
+        super().__setitem__(idx, cache)
+
+        # Make sure the cache has consistent shapes even when the number of experts per layer varies
+        self._pad_with_0s()
 
     def __getitem__(self, __key: str) -> MoELayerCache:
         return super().__getitem__(__key)
@@ -60,7 +63,7 @@ class MoEFullCache(Dict[str, MoELayerCache]):
     def num_experts(self) -> int:
         return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
 
-    def pad_with_0s(self) -> None:
+    def _pad_with_0s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
         for _, cache in self.items():
             if cache.G.shape[1] < self.num_experts:
