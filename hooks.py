@@ -36,3 +36,22 @@ class VerboseModel(nn.Module):
 
     def forward(self, x: t.Tensor) -> t.Tensor:
         return self.model(x)
+
+
+class FeatureExtractor(nn.Module):
+    def __init__(self, model: nn.Module, layer_name: str):
+        super().__init__()
+        self.model = model
+        self._features: t.Tensor
+
+        assert layer_name in self.model._modules.keys()
+        self.save_outputs_hook(dict([*self.model.named_modules()])[layer_name])
+
+    def save_outputs_hook(self, module: nn.Module) -> None:
+        def fwd_hook(mod, input, output):
+            self._features = output
+
+        module.register_forward_hook(fwd_hook)
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        return self.model(x)
