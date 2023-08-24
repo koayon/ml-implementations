@@ -201,7 +201,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
                 expert_num=expert_num, G=G, x=x, chosen_token_index=chosen_token_index
             )
             for expert_num in range(self.num_experts)
-        ]  # list[bs hidden_size]
+        ]  # expert list[bs hidden_size]
 
         # Aggregate expert results together
         expert_results_stack = t.stack(
