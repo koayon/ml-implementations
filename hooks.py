@@ -55,3 +55,25 @@ class FeatureExtractor(nn.Module):
 
     def forward(self, x: t.Tensor) -> t.Tensor:
         return self.model(x)
+
+
+class LayerDiffRMS(nn.Module):
+    def __init__(self, model: nn.Module, layer_name: str):
+        super().__init__()
+        self.model = model
+        self._rms: float
+
+        assert layer_name in self.model._modules.keys()
+        self.layer_diff_rms_hook(dict([*self.model.named_modules()])[layer_name])
+
+    def layer_diff_rms_hook(self, module: nn.Module) -> None:
+        def fwd_hook(mod, input, output):
+            assert output.shape == input.shape
+            diff = output - input
+            rms = t.sqrt(t.mean(diff**2)).item()
+            self._rms = rms
+
+        module.register_forward_hook(fwd_hook)
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        return self.model(x)
