@@ -20,6 +20,8 @@ RATIO = 2 / 3
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
+config = MoETConfig()
+
 
 class GroupExpertChoiceMoELayer(nn.Module):
     experts: nn.ModuleList
@@ -30,13 +32,13 @@ class GroupExpertChoiceMoELayer(nn.Module):
     def __init__(
         self,
         *,
-        config: MoETConfig,
         num_experts: int,
+        router_str: str,
+        layer_id: str,
+        config: MoETConfig = config,
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
-        router_str: str,
-        layer_id: str,
     ) -> None:
         super().__init__()
 
@@ -76,7 +78,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
             ]
             down_experts = [
                 nn.Linear(
-                    in_features=int(self.hidden_size * MULT * RATIO * self.num_experts),
+                    in_features=int(self.hidden_size * MULT * RATIO),
                     out_features=self.hidden_size,
                     device=device,
                 )
@@ -88,11 +90,13 @@ class GroupExpertChoiceMoELayer(nn.Module):
             experts = []
             for expert_num in range(self.num_experts):
                 expert_group_num = expert_num // group_size
-                experts[expert_num] = nn.Sequential(
-                    up_experts[expert_group_num],
-                    silu,
-                    down_experts[expert_num],
-                    expert_dropout,
+                experts.append(
+                    nn.Sequential(
+                        up_experts[expert_group_num],
+                        silu,
+                        down_experts[expert_num],
+                        expert_dropout,
+                    )
                 )
             self.experts = nn.ModuleList(experts)
         else:
@@ -189,6 +193,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
+        # Store cache for interpretability and loss function
         layer_cache = MoELayerCache(
             G=G,
             token_assignments=chosen_token_index,
@@ -216,7 +221,6 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
 def main():
     expert_layer = GroupExpertChoiceMoELayer(
-        config=MoETConfig(),
         k=2,
         layer_id="expert-layer-1",
         num_experts=4,
