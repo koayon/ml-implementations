@@ -10,12 +10,10 @@ DTYPE = torch.float32
 @pytest.mark.parametrize("hidden_size", [8, 16])
 @pytest.mark.parametrize("batch_size", [1, 4])
 @pytest.mark.parametrize("seq_len", [1, 4])
-@pytest.mark.parametrize("in_features", [8, 16])
 def test_confi_ffn(
     hidden_size: int,
     batch_size: int,
     seq_len: int,
-    in_features: int,
 ):
     confi_ffn = ConfiFFN(
         hidden_size=hidden_size,
@@ -23,7 +21,7 @@ def test_confi_ffn(
         activation_function="silu",
     )
     x = torch.randn(
-        (batch_size, seq_len, in_features),
+        (batch_size, seq_len, hidden_size),
         device=DEVICE,
         dtype=DTYPE,
         requires_grad=True,
