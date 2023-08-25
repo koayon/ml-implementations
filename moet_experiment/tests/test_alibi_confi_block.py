@@ -1,10 +1,10 @@
 import pytest
-import torch
+import torch as t
 
 from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DTYPE = torch.float32
+DEVICE = t.device("cuda" if t.cuda.is_available() else "cpu")
+DTYPE = t.float32
 
 
 @pytest.mark.parametrize("layer_index", [0])
@@ -12,22 +12,20 @@ DTYPE = torch.float32
 @pytest.mark.parametrize("num_heads", [1, 4])
 @pytest.mark.parametrize("batch_size", [1, 4])
 @pytest.mark.parametrize("seq_len", [1, 4])
-@pytest.mark.parametrize("in_features", [8])
 def test_alibi_confi_t_block(
     layer_index: int,
     hidden_size: int,
     num_heads: int,
     batch_size: int,
     seq_len: int,
-    in_features: int,
 ):
     transformer_block = ALiBiConfiTBlock(
         layer_index=layer_index,
         hidden_size=hidden_size,
         num_heads=num_heads,
     )
-    x = torch.randn(
-        (batch_size, seq_len, in_features),
+    x = t.randn(
+        (batch_size, seq_len, hidden_size),
         device=DEVICE,
         dtype=DTYPE,
         requires_grad=True,
@@ -54,11 +52,11 @@ def test_alibi_confi_t_block_exceptions():
     )
 
     # Test wrong input dimension
-    x = torch.randn((1, 4, 16), device=DEVICE, dtype=DTYPE)
+    x = t.randn((1, 4, 16), device=DEVICE, dtype=DTYPE)
     with pytest.raises(RuntimeError):
         transformer_block(x)
 
     # Test invalid number of dimensions
-    x = torch.randn((1, 4, 2, 8), device=DEVICE, dtype=DTYPE)
+    x = t.randn((1, 4, 2, 8), device=DEVICE, dtype=DTYPE)
     with pytest.raises(ValueError):
         transformer_block(x)
