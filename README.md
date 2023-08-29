@@ -1,4 +1,5 @@
-# ML Replications
+# ML Implementations
+
 
 PyTorch implementations of interesting papers and ideas in Machine Learning along with my own ideas and experiments.
 
