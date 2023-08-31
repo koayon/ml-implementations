@@ -39,10 +39,10 @@ def test_ensemble(
     assert x.grad.requires_grad is False
 
     # Check that model is the same as averaging the outputs of the models
-    y1 = F.log_softmax(l1(x), dim = -1)
-    y2 = F.log_softmax(l2(x), dim = -1)
-    y3 = F.log_softmax(l3(x), dim = -1)
-    y_avg = t.mean(t.stack([y1, y2, y3], dim = 0), dim = 0)
+    y1 = F.softmax(l1(x), dim = -1)
+    y2 = F.softmax(l2(x), dim = -1)
+    y3 = F.softmax(l3(x), dim = -1)
+    y_avg = t.log(t.mean(t.stack([y1, y2, y3], dim = 0), dim = 0))
 
     assert t.allclose(y, y_avg, atol = 1e-4)
 
@@ -74,10 +74,11 @@ def test_weighted_ensemble():
     assert x.grad.requires_grad is False
 
     # Check that model is the same as weighted averaging the outputs of the models
-    y1 = F.log_softmax(l1(x), dim = -1)
-    y2 = F.log_softmax(l2(x), dim = -1)
-    y3 = F.log_softmax(l3(x), dim = -1)
+    y1 = F.softmax(l1(x), dim = -1)
+    y2 = F.softmax(l2(x), dim = -1)
+    y3 = F.softmax(l3(x), dim = -1)
 
-    y_weighted_avg = einsum(ensemble_model.model_weighting, t.stack([y1, y2, y3], dim = 0), "model, model batch seq vocab -> batch seq vocab")
+    y_weighted_avg = t.log(einsum(ensemble_model.model_weighting, t.stack([y1, y2, y3], dim = 0), "model, model batch seq vocab -> batch seq vocab"))
+
 
     assert t.allclose(y, y_weighted_avg, atol = 1e-4)

@@ -23,27 +23,28 @@ class Ensemble(nn.Module):
         super().__init__()
         self.models = models
 
-        if model_weighting is not None:
-            assert model_weighting.shape == (len(models),)
-            self.model_weighting = model_weighting/t.sum(model_weighting) # models
-        else:
-            self.model_weighting = None
+        if model_weighting is None:
+            # All models are equally weighted
+            model_weighting = t.ones(len(models))
+
+        assert model_weighting.shape == (len(models),)
+        self.model_weighting = model_weighting/t.sum(model_weighting) # models
 
     def forward(self, x: t.Tensor) -> t.Tensor:
-        logprobs_list = []
+        probs_list = []
+
         # Forward pass through each model
         for model in self.models:
             logits = model(x)
+
             # We want to average the probs rather than logits since these are normalized and calibrated.
-            logprobs_list.append(F.log_softmax(logits, dim = -1))
+            probs_list.append(F.softmax(logits, dim = -1))
 
-        print(logprobs_list)
+        all_probs = t.stack(probs_list, dim = 0) # models batch seq vocab
 
-        all_logprobs = t.stack(logprobs_list, dim = 0) # models batch seq vocab
+        probs = einsum(self.model_weighting, all_probs, "model, model batch seq vocab -> batch seq vocab")
 
-        if self.model_weighting is None:
-            logprobs = t.mean(all_logprobs, dim = 0)
-        else:
-            logprobs = einsum(self.model_weighting, all_logprobs, "model, model batch seq vocab -> batch seq vocab")
+        # Return logprobs so the outputs are in log space like we expect from our models.
+        logprobs = t.log(probs)
 
         return logprobs
