@@ -7,7 +7,7 @@ class MoEConfig:
     "Constants used for the MoE model."
 
     # Model
-    tokeniser_string: str = "gpt2"
+    tokenizer_string: str = "gpt2"
     activation_function: str = "gelu"
     num_layers: int = 6
     num_experts: int = 4

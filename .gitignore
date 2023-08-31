@@ -161,7 +161,6 @@ cython_debug/
 
 
 data
-scratch.ipynb
 runs
 models
 script.py
@@ -169,3 +168,4 @@ script.py
 general/int8_quantise.py
 wandb
 notebooks
+scratch/

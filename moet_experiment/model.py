@@ -46,7 +46,7 @@ class MoET(nn.Module):
 
         layers: OrderedDict[str, nn.Module] = collections.OrderedDict()
 
-        if config.confi_mlp:
+        if config.use_confi_mlp:
             T_Block = ALiBiConfiTBlock
         else:
             T_Block = ALiBiTransformerBlock
@@ -75,7 +75,6 @@ class MoET(nn.Module):
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
                 )
-                # TODO: Switch out for ConfiNet Block
         for i in range(self.num_early_layers, self.num_layers):
             if i % 2 == 0:
                 layers[f"moe_block_late{i}"] = MoETBlock(
@@ -98,6 +97,7 @@ class MoET(nn.Module):
         # self.pos_embedding = nn.Embedding(
         #     config.max_position_embeddings, config.hidden_size
         # )
+
         self.sequential_layers = nn.Sequential(layers)
         self.final_norm = RMSNorm(shape_without_batch=(config.hidden_size,))
         self.cache = MoEFullCache({})

@@ -22,7 +22,7 @@ from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
 
 config = MoEConfig()
-tokeniser = tiktoken.encoding_for_model(config.tokeniser_string)
+tokeniser = tiktoken.encoding_for_model(config.tokenizer_string)
 
 
 class SparseMoETransformer(nn.Module):
@@ -104,7 +104,7 @@ class SparseMoETransformer(nn.Module):
 
 def sample_next_token(input: str, model: nn.Module) -> str:
     # Tokenise input
-    tokenizer = tiktoken.encoding_for_model(config.tokeniser_string)
+    tokenizer = tiktoken.encoding_for_model(config.tokenizer_string)
     tokens_list = tokenizer.encode(input)
     tokens = t.Tensor(tokens_list).long().unsqueeze(0)  # batch seq
 

@@ -1,7 +1,6 @@
 import pytest
 import torch as t
 from einops import einsum
-from pyexpat import model
 from torch import nn
 from torch.nn import functional as F
 

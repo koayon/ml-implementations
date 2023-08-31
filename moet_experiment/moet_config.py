@@ -7,9 +7,9 @@ class MoETConfig:
     "Constants used for the MoET model."
 
     # Model
-    tokeniser_string: str = "gpt2"
+    tokenizer_string: str = "roneneldan/TinyStories-8M"
     activation_function: str = "silu"
-    confi_mlp: bool = False
+    use_confi_mlp: bool = True
 
     num_total_layers: int = 8
     num_early_layers: int = 4

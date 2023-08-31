@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import random
+import token
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
@@ -15,6 +16,7 @@ import requests
 import tiktoken
 import torch
 import torch.distributed as dist
+from tiktoken import Encoding
 from torch.utils.data import (
     DataLoader,
     Dataset,
@@ -23,6 +25,7 @@ from torch.utils.data import (
     get_worker_info,
 )
 from tqdm import tqdm
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 tokenizer = tiktoken.encoding_for_model("gpt2")
 
@@ -76,7 +79,7 @@ def download():
     print(f"Example story:\n{data[0]}")
 
 
-def pretokenize():
+def pretokenize(tokenizer: Encoding | PreTrainedTokenizerBase):
     def process_shard(shard):
         with open(shard, "r") as f:
             data = json.load(f)
@@ -84,7 +87,12 @@ def pretokenize():
         for example in tqdm(data):
             text = example["story"]
             text = text.strip()  # get rid of leading/trailing whitespace
-            tokens = tokenizer.encode(text)  # encode the text
+            if isinstance(tokenizer, Encoding):
+                # For tiktoken
+                tokens = tokenizer.encode(text)  # encode the text
+            else:
+                # For hf transformers
+                tokens = tokenizer(text, return_tensors="pt")
             all_tokens.extend(tokens)
         # convert to uint16 nparray
         all_tokens = np.array(all_tokens, dtype=np.uint16)
@@ -155,7 +163,8 @@ class TinyStoriesDataset(IterableDataset):
 
 if __name__ == "__main__":
     # download()
-    # pretokenize()
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
+    pretokenize(tokenizer=tokenizer)
     train_dataset = TinyStoriesDataset(split="train", max_seq_len=1024)
     train_dataloader = DataLoader(
         train_dataset,
