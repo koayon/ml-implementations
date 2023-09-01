@@ -3,12 +3,17 @@ from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange, repeat
+from numpy import cumsum
 from torch import nn
 from torch.nn import functional as F
 
 from general.swiglu_ffn import SwiGLUFFN
 from helpers import einsum
-from mixture_of_experts.cache import MoELayerCache
+from mixture_of_experts.cache import (
+    ExpertChoiceLayerCache,
+    MoELayerCache,
+    TokenChoiceLayerCache,
+)
 from mixture_of_experts.routers import HashRouter
 from moet_experiment.moet_config import MoETConfig
 
@@ -163,67 +168,29 @@ class GroupExpertChoiceMoELayer(nn.Module):
         else:
             self.k = k
 
-    def forward_individual_expert_choice(
-        self,
-        expert_num: int,
-        chosen_token_index: t.Tensor,
-        G: t.Tensor,
-        x: t.Tensor,
-    ) -> t.Tensor:
-        """_summary_
+    def get_first_drop_point(self, a: t.Tensor, k: int):
+        # All the indices where we need to drop
+        indices = t.nonzero(a >= k)
 
-        Parameters
-        ----------
-        expert_num : int
-            The expert that we're using for forward
-        chosen_token_index : t.Tensor
-            Shape (k, num_experts)
-        G : t.Tensor
-            Shape (k, num_experts)
-        x : t.Tensor
-            Shape (bs hidden_size)
+        # Intialise drop_points as -1s for each expert (no dropping)
+        drop_points = -t.ones(a.shape[0])
 
-        Returns
-        -------
-        t.Tensor
-            Shape (bs hidden_size)
-        """
+        for expert_num, token_num in indices:
+            # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it
+            if drop_points[expert_num] == -1:
+                drop_points[expert_num] = token_num
 
-        batch_seq_size = x.shape[0]
-
-        # Select top-k expert, with one-hot vector. P is the permutation matrix
-        P: t.Tensor = F.one_hot(
-            chosen_token_index, num_classes=batch_seq_size
-        )  # k num_experts (one-hot)
-
-        P = rearrange(P, "k num_experts bs -> bs k num_experts")  # bs k num_experts
-
-        # Extract relevant sections of P, G
-        P_expert = P[..., expert_num] * 1.0  # bs k
-        G_expert = G[:, expert_num]  # k
-
-        tokens_for_expert = einsum(
-            "bs k, bs hidden_size -> k hidden_size", P_expert, x
-        )  # k hidden_size
-
-        # TODO: All of above could be moved to forward (or another method) so that this
-        # function represents the abstraction boundary of "things which happen on the expert GPU"
-        # It also seems like this could all be done in one go with tensors rather than per expert
-
-        # Forward pass through the expert network
-        E = self.experts[expert_num](tokens_for_expert)
-        # k hidden_size
-
-        x_out = einsum(
-            "bs k, k, k hidden_size -> bs hidden_size", P_expert, G_expert, E
-        )  # bs hidden_size
-
-        return x_out
+        return drop_points
 
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
-    ) -> Tuple[t.Tensor, MoELayerCache]:
+    ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
         """
+        For interpretability uses we want to hook and cache G (the top k softmaxed router weights - either over tokens or experts).
+        We also want the chosen token/expert indices known as the assignments.
+
+        It may also be interesting to look at S which is the same as G but the full matrix, not restricted to the top k.
+
         Args:
             x: batch seq hidden_size
             router: hidden_size num_experts
@@ -231,7 +198,15 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
         Returns:
             x: batch, seq, hidden_size
-            cache: MoELayerCache: G, token_assignments, routing_weights
+            MoELayerCache
+            Either an ExpertChoiceLayerCache or a TokenChoiceLayerCache depending on the value of self.use_expert_choice
+            Contains:
+                G: (depends on self.use_expert_choice)
+                assignments: (depends on self.use_expert_choice)
+
+                routing_weights: (batch seq) num_experts
+                    Also called h. These are the logits used in the loss function.
+
         """
 
         batch_size, seq_len, _hidden_size = x.shape
@@ -248,38 +223,75 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
         if self.use_expert_choice:
             # Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
+
             G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
-            # Store cache for interpretability and loss function
-            layer_cache = MoELayerCache(
+            layer_cache = ExpertChoiceLayerCache(
                 G=G,
                 token_assignments=chosen_token_index,
                 routing_weights=h,
             )
 
-            # Collect expert results from parallelised expert forward
-            expert_results = [
-                self.forward_individual_expert_choice(
-                    expert_num=expert_num, G=G, x=x, chosen_token_index=chosen_token_index
-                )
-                for expert_num in range(self.num_experts)
-            ]  # expert list[bs hidden_size]
+            # Select top-k expert, with one-hot vector. P is the permutation matrix
+            P: t.Tensor = F.one_hot(
+                chosen_token_index, num_classes=batch_size * seq_len
+            )  # k num_experts bs (one-hot)
+
+            P = rearrange(P, "k num_experts bs -> bs k num_experts").float()  # bs k num_experts
+
         else:
+            # We use left-to-right token dropping.
+            # TODO: Add random token-dropping.
+
             # Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
             # If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
             # The only information that can be shared is that a token is dropped.
             # Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
             # Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
+
             G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
-            raise NotImplementedError
 
-        # Aggregate expert results together
-        expert_results_stack = t.stack(
-            expert_results, dim=0
-        )  # num_experts bs hidden_size
-        y = t.sum(expert_results_stack, dim=0)  # bs hidden_size
+            layer_cache = TokenChoiceLayerCache(
+                G=G,
+                expert_assignments=chosen_expert_index,
+                routing_weights=h,
+            )
 
-        y = rearrange(y, "(b s) h -> b s h", b=batch_size)  # batch seq hidden_size
+            # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
+
+            # Select top-k expert, with one-hot vector
+            P = nn.functional.one_hot(
+                chosen_expert_index,
+            )  # bs k num_experts (one-hot)
+            tokens_per_expert = t.sum(P, dim=1)  # bs num_experts
+
+            cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # bs num_experts
+
+            cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "bs num_experts -> num_experts bs")
+
+            drop_points = self.get_first_drop_point(cumsum_tokens_per_expert, self.k)
+
+            for expert_num in range(self.num_experts):
+                # Set everything after the drop point to 0
+                P[drop_points[expert_num]:, :, expert_num] = 0 # bs k num_experts
+
+            # Now P defines a permutation matrix where each expert gets at most k tokens.
+
+        tokens_for_expert = einsum(
+                "bs k expert, bs hidden_size -> expert k hidden_size", P, x
+            )  # expert k hidden_size
+
+        # USE EXPERTS
+        # forward the relevant tokens through the relevant expert
+        E_list = [self.experts[expert_num](tokens_for_expert[expert_num]) for expert_num in range(self.num_experts)]  # num_experts list[k hidden_size]
+
+        E = t.stack(E_list, dim=0)  # num_experts k hidden_size
+
+        # Put the results back in the right order with the permutation matrix P and weight them correctly with the routing weights G
+        y = einsum(
+            "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P, G, E)
+
+        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
 
         return y, layer_cache
 
