@@ -1,17 +1,29 @@
-from doctest import debug
-from transformers import Trainer, TrainingArguments, GenerationConfig, PreTrainedTokenizerBase, AutoTokenizer, PretrainedConfig, PreTrainedModel
-from moet_experiment.moet_config import MoETConfig
-from moet_experiment.model import MoET
-import torch as t
 import os
+from doctest import debug
+from typing import List, Optional
+
+import evaluate
 import pandas as pd
-from torch import nn
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
-import wandb
-from typing import Optional, List
-from datasets import Dataset, load_dataset
-from torch.nn import functional as F
+import torch as t
+from datasets import Dataset, DatasetDict, load_dataset
 from einops import rearrange
+from librosa import ex
+from torch import nn
+from torch.nn import functional as F
+from transformers import (
+    AutoTokenizer,
+    GenerationConfig,
+    PretrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+    Trainer,
+    TrainingArguments,
+)
+
+import wandb
+from mixture_of_experts.tiny_stories import TinyStoriesDataset
+from moet_experiment.model import MoET
+from moet_experiment.moet_config import MoETConfig
 
 EXPERIMENT_NAME = "test"
 EXPERIMENT_GROUP = "test"
@@ -24,9 +36,20 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         output_dir="checkpoints",
         per_device_train_batch_size=config.batch_size,
         per_device_eval_batch_size=config.batch_size,
-        # eval_accumulation_steps=32,
-        fp16=True if t.cuda.is_available() else False,
         learning_rate=config.learning_rate,
+        weight_decay = config.weight_decay,
+
+        # Optimizations
+        # gradient_checkpointing = True
+        # deepspeed = "deepspeed_config.json"
+
+        # PyTorch 2.0 settings
+        bf16=True if t.cuda.is_available() else False, # bfloat16 training
+        torch_compile=True, # optimizations
+        optim="adamw_torch_fused", # improved optimizer
+        # eval_accumulation_steps=32,
+
+        # Save, log, eval
         # num_train_epochs=config.num_epochs,
         max_steps = 100 if debug else config.max_steps,
         warmup_steps = config.warmup_steps,
@@ -38,22 +61,55 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         eval_steps=config.eval_steps,
         save_total_limit=5,
         load_best_model_at_end = True,
-        weight_decay = config.weight_decay,
-        report_to="wandb",
-        # deepspeed = "deepspeed_config.json"
-        # gradient_checkpointing = True
+        report_to=["wandb"],
     )
 
-    def data_collator()
+    exact_match_metric = evaluate.load("exact_match")
+    def compute_metrics(eval_pred):
+        """Calculates metrics for evaluation.
+        Here we take in the LOGITS and labels and compute the perplexity and other metrics.
+        We are not taking in word predictions per se.
+
+        Parameters
+        ----------
+        eval_pred : EvalPrediction
+            Tuple of logits and labels.
+
+        Returns
+        -------
+        dict
+            Computed metrics.
+        """
+        logits, labels = eval_pred
+
+        # Perplexity
+        flattened_logits = rearrange(logits, "b s v -> (b s) v")
+        flattened_labels = rearrange(labels, "b s -> (b s)")
+        loss = F.cross_entropy(flattened_logits, flattened_labels)
+        per_word_loss = loss / flattened_labels.shape[0]
+
+        perplexity = t.exp(-per_word_loss).item()
+
+        # Exact match
+        preds = t.argmax(logits, dim=-1)
+
+        preds_str_list = tokenizer.batch_decode(preds, skip_special_tokens=True)
+        labels_str_list = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        try:
+            exact_match = exact_match_metric.compute(predictions = preds_str_list, references=labels_str_list)["exact_match"]
+        except:
+            exact_match = None
+        return {"perxplexity": perplexity, "exact_match": exact_match}
 
     trainer = Trainer(
         model = model,
         args = training_args,
         tokenizer = tokenizer,
-        data_collator=data_collator,
+        # data_collator=data_collator,
         train_dataset = train_dataset,
         eval_dataset = eval_dataset,
-        # compute_metrics = None,
+        compute_metrics = compute_metrics,
         # preprocess_logits_for_metrics = None,
     )
     return trainer
@@ -152,10 +208,6 @@ class MOETHFModel(PreTrainedModel):
             return {"logits": logits}
 
 
-
-# TODO: There's a problem with the dataset. It's not working with the trainer.
-# We might want to switch to Dataset over IterableDataset
-
 def main():
     config = MoETConfig()
 
@@ -183,7 +235,7 @@ def main():
 
     print(processed_dataset.column_names)
 
-    train_dataset = processed_dataset["train"]
+    train_dataset: Dataset = processed_dataset["train"]
     eval_dataset = processed_dataset["validation"]
     eval_dataset = eval_dataset.select(list(range(100)))
     # print(eval_dataset[0])
@@ -199,7 +251,7 @@ def main():
     if EVALUATE:
         evaluate_model(trainer = trainer, config = config, evals_df = evals_df)
 
-    prompt = "Once upon a time, there was a "
+    prompt = eval_dataset.select(list(range(100,101)))
     output = trainer.predict(prompt)
     print("Prompt: ", prompt)
     print("Output: ", output)
