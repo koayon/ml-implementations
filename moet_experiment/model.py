@@ -1,5 +1,5 @@
 import collections
-from typing import OrderedDict, Tuple
+from typing import OrderedDict, Tuple, Optional
 
 import tiktoken
 import torch as t
@@ -108,7 +108,7 @@ class MoET(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, **kwargs) -> Tuple[t.Tensor, MoEFullCache]:
+    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None, **kwargs) -> Tuple[t.Tensor, MoEFullCache]:
         """
         x: batch seq_length
         """

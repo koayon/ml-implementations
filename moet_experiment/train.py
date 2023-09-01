@@ -1,6 +1,6 @@
 from datetime import datetime
 from functools import lru_cache
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 import tiktoken
 import torch as t
@@ -30,8 +30,6 @@ from optimisers.sgd import SGD
 from optimisers.sophia import Sophia
 
 device = "cuda" if t.cuda.is_available() else "cpu"
-
-# config = MoEConfig()
 
 OPTIMISERS = {
     "my_adam": Adam,
@@ -73,7 +71,7 @@ class Trainer:
 
     def __init__(
         self,
-        config: MoEConfig | MoETConfig,
+        config: Union[MoEConfig, MoETConfig],
         model: nn.Module,
         model_name: str,
         optimiser_string: str = "adam",
@@ -85,7 +83,7 @@ class Trainer:
         self.optimiser_string = optimiser_string
         self.Optimiser = OPTIMISERS[optimiser_string]
         if max_iters:
-            self.config.max_iters = max_iters
+            self.config.max_steps = max_iters
         self.model_name = model_name
         if model_load_path:
             _model, self.optimiser = self.load_model(model_load_path)
@@ -179,6 +177,7 @@ class Trainer:
         MoE_cache: MoEFullCache
 
         if targets is None:
+            # Note that we don't have ground truth for the final prediction so we shift along one.
             x = inputs[:, :-1].to(device)
             y = inputs[:, 1:].to(device)
         else:
@@ -188,8 +187,8 @@ class Trainer:
         optimiser.zero_grad()
 
         # Forward pass
-        # Run model to get logits, note that we don't have ground truth for the final prediction
-        logits, MoE_cache = model(inputs)
+        # Run model to get logits
+        logits, MoE_cache = model(x)  # batch, seq_len, vocab_size
 
         # Extract the router logits from the cache and use for router z-loss
         router_logits = MoE_cache.routing_weights_tensor  # layer, bs, num_experts
@@ -271,7 +270,7 @@ class Trainer:
 
         # Train the model
         for epoch in range(self.config.num_epochs):
-            for batch_data in train_dataloader:
+            for batch_data in tqdm(train_dataloader):
                 if data_source == "tiny_shakespeare":
                     train_loss = self.estimate_loss(
                         sample_batch_num=sample_batch_num,
@@ -293,7 +292,7 @@ class Trainer:
                     )
 
                 sample_batch_num += 1
-                if sample_batch_num > self.config.max_iters:
+                if sample_batch_num > self.config.max_steps:
                     checkpoint = {
                         "model": model.state_dict(),
                         "optimizer": optimiser.state_dict(),
@@ -306,7 +305,7 @@ class Trainer:
                         model_name=f"{self.model_name}/post_training",
                     )
                     break
-                print(f"Sample batch num: {sample_batch_num}/{self.config.max_iters}")
+                # print(f"Sample batch num: {sample_batch_num}/{self.config.max_iters}")
 
                 if sample_batch_num % self.config.eval_steps == 0:
                     # Evaluate model
@@ -406,13 +405,16 @@ class Trainer:
 
 def main():
     # Set up the trainer
+    model = MoET()
+    model.to(device)
+
     trainer = Trainer(
         model=MoET(),
         config=MoETConfig(),
-        max_iters=100,
         model_name="moet",
-        # model_load_path="models/moetpost_training_2023-08-23.pt",
+        model_load_path="models/moet/post_training_2023-08-31.pt",
     )
+    print("Created trainer")
 
     # Train and save the model
     trainer.model = trainer.train(data_source="tiny_stories")
