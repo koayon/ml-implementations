@@ -169,3 +169,6 @@ general/int8_quantise.py
 wandb
 notebooks
 scratch/
+checkpoints/
+runs.csv
+evals.csv
