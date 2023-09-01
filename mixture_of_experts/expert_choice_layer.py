@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from helpers import einsum
-from mixture_of_experts.cache import MoELayerCache
+from mixture_of_experts.cache import ExpertChoiceLayerCache
 from mixture_of_experts.config import MoEConfig
 
 ROUTERS = ["linear", "hash", ...]
@@ -95,7 +95,7 @@ class ExpertChoiceFFN(nn.Module):
 
         return x_out
 
-    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoELayerCache]:
+    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, ExpertChoiceLayerCache]:
         """
         Args:
             x: batch seq hidden_size
@@ -125,7 +125,7 @@ class ExpertChoiceFFN(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
-        layer_cache = MoELayerCache(
+        layer_cache = ExpertChoiceLayerCache(
             G=G,
             token_assignments=chosen_token_index,
             routing_weights=h,

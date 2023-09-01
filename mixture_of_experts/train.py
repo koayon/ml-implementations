@@ -18,7 +18,7 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
 from typeguard import typechecked
 
 import wandb
-from mixture_of_experts.cache import MoEFullCache
+from mixture_of_experts.cache import ExpertChoiceFullCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer, sample_next_token
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
@@ -172,7 +172,7 @@ class Trainer:
         model: nn.Module,
         optimiser: Optimizer,
     ):
-        MoE_cache: MoEFullCache
+        MoE_cache: ExpertChoiceFullCache
 
         if targets is None:
             x = inputs[:, :-1].to(device)

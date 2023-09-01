@@ -17,7 +17,7 @@ from torch.distributions.categorical import Categorical
 from gpt.transformer_block import GPT2Block
 from helpers import einsum
 from hooks import remove_hooks
-from mixture_of_experts.cache import MoEFullCache, MoELayerCache
+from mixture_of_experts.cache import ExpertChoiceFullCache, ExpertChoiceLayerCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.moe_block import MoEBlock
 
@@ -31,7 +31,7 @@ class SparseMoETransformer(nn.Module):
     transformer_block: nn.Module
     moe_block: nn.Module
     vocab_size: int
-    cache: MoEFullCache
+    cache: ExpertChoiceFullCache
 
     def __init__(
         self,
@@ -65,7 +65,7 @@ class SparseMoETransformer(nn.Module):
         )
         self.sequential_layers = nn.Sequential(self.layers)
         self.final_norm = nn.LayerNorm([config.hidden_size])
-        self.cache = MoEFullCache({})
+        self.cache = ExpertChoiceFullCache({})
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
         out = einsum(
@@ -73,7 +73,7 @@ class SparseMoETransformer(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, MoEFullCache]:
+    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, ExpertChoiceFullCache]:
         """
         x: batch seq_length
         """
@@ -127,7 +127,7 @@ def sample_next_token(input: str, model: nn.Module) -> str:
     return tokenizer.decode([sampled_token])
 
 
-def token_path(cache: MoEFullCache, token_num: int) -> dict:
+def token_path(cache: ExpertChoiceFullCache, token_num: int) -> dict:
     """
     Given the token path cache, return where a given token was routed to.
     Show the path as a heatmap.
@@ -164,7 +164,7 @@ def token_path(cache: MoEFullCache, token_num: int) -> dict:
     return out
 
 
-def expert_importance(cache: MoEFullCache) -> t.Tensor:
+def expert_importance(cache: ExpertChoiceFullCache) -> t.Tensor:
     """
     Calculates the importance of each expert in a layer based on the softmaxed routing weights.
 
@@ -184,7 +184,7 @@ def expert_importance(cache: MoEFullCache) -> t.Tensor:
 
 
 def top_tokens_for_expert(
-    cache: MoEFullCache,
+    cache: ExpertChoiceFullCache,
     layer_index: str,
     expert_num: int,
     input: t.Tensor,
@@ -226,7 +226,7 @@ def top_tokens_for_expert(
 
 
 def expert_token_table(
-    cache: MoEFullCache, input: t.Tensor, tokeniser: tiktoken.Encoding = tokeniser
+    cache: ExpertChoiceFullCache, input: t.Tensor, tokeniser: tiktoken.Encoding = tokeniser
 ) -> pd.DataFrame:
     layer_indexes = []
     expert_nums = []

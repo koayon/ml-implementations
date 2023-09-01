@@ -1,5 +1,5 @@
 import collections
-from typing import OrderedDict, Tuple, Optional
+from typing import Optional, OrderedDict, Tuple
 
 import tiktoken
 import torch as t
@@ -13,7 +13,7 @@ from alibi.transformer_block import ALiBiTransformerBlock
 from general.norms import RMSNorm
 from helpers import einsum, get_param_count_dict, tiny_stories_true_parameter_count
 from hooks import remove_hooks
-from mixture_of_experts.cache import MoEFullCache
+from mixture_of_experts.cache import ExpertChoiceFullCache
 from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
 from moet_experiment.moe_blocks import MoETBlock
 from moet_experiment.moet_config import MoETConfig
@@ -31,7 +31,7 @@ class MoET(nn.Module):
     transformer_block: nn.Module
     moe_block: nn.Module
     vocab_size: int
-    cache: MoEFullCache
+    cache: ExpertChoiceFullCache
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class MoET(nn.Module):
 
         self.sequential_layers = nn.Sequential(layers)
         self.final_norm = RMSNorm(shape_without_batch=(config.hidden_size,))
-        self.cache = MoEFullCache({})
+        self.cache = ExpertChoiceFullCache({})
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
         out = einsum(
@@ -108,7 +108,7 @@ class MoET(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None, **kwargs) -> Tuple[t.Tensor, MoEFullCache]:
+    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None, **kwargs) -> Tuple[t.Tensor, ExpertChoiceFullCache]:
         """
         x: batch seq_length
         """
