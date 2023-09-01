@@ -93,7 +93,7 @@ def pretokenize(tokenizer: Encoding | PreTrainedTokenizerBase):
                 tokens = tokenizer.encode(text)  # encode the text
             elif isinstance(tokenizer, PreTrainedTokenizerBase):
                 # For hf transformers
-                tokens = tokenizer(text)["input_ids"]
+                tokens: list = tokenizer(text)["input_ids"] # type: ignore
             else:
                 raise ValueError(f"Unknown tokenizer type {type(tokenizer)}")
 
@@ -188,7 +188,7 @@ if __name__ == "__main__":
 
     train_dataset = TinyStoriesDataset(split="train", max_seq_len=1024)
 
-    print("Dataset length:", len(train_dataset))
+    # print("Dataset length:", len(train_dataset))
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=12,

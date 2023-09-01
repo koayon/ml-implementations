@@ -80,7 +80,7 @@ class Trainer:
         self.model_engine = None
         self.config = config
         if max_iters:
-            self.config.max_iters = max_iters
+            self.config.max_steps = max_iters
 
     def get_text_data(
         self,
@@ -224,7 +224,7 @@ class Trainer:
         # Train the model
         for epoch in range(self.config.num_epochs):
             data_iter = iter(train_dataloader)
-            for sample_batch_num in tqdm(range(self.config.max_iters)):
+            for sample_batch_num in tqdm(range(self.config.max_steps)):
                 # Iterate over batches
                 try:
                     batch_data = next(data_iter)

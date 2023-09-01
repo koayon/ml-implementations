@@ -26,7 +26,7 @@ class MoEConfig:
     eval_capacity_factor: float = 2.0
 
     # Training parameters
-    max_iters: int = 100
+    max_steps: int = 100
     num_epochs: int = 1
     learning_rate: float = 0.001
 

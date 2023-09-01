@@ -21,7 +21,7 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 # config = MoETConfig()
 
 class Router(nn.Module):
-    def __init__(self, *, num_experts: int, router_str: str, training: bool, config: MoETConfig):
+    def __init__(self, *, num_experts: int, router_str: str, config: MoETConfig):
         super().__init__()
         self.config = config
 
@@ -29,7 +29,6 @@ class Router(nn.Module):
         self.router_temperature = config.router_temperature
         self.num_experts = num_experts
         self.hidden_size = config.hidden_size
-        self.training = training
 
         if router_str in ("linear", "learned"):
             # Define the linear router
@@ -61,13 +60,14 @@ class Router(nn.Module):
                 assert input_tokens is not None
 
                 input_tokens = rearrange(input_tokens, "b s -> (b s)")
-                clean_h = self.hash_router(input_tokens).float()  # bs num_experts
+                clean_h = self.hash_router(input_tokens)  # bs num_experts
             else:
-                clean_h = self.linear(x).float()  # bs num_experts
+                clean_h = self.linear(x)  # bs num_experts
 
             clean_h = self.routing_dropout(clean_h)  # bs num_experts
 
             # Add gumbel noise to the routing logits to encourage exploration during training
+            # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
             if self.training:
                 gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
                 h = (clean_h + gumbel_noise) / self.router_temperature
@@ -87,11 +87,11 @@ class GroupExpertChoiceMoELayer(nn.Module):
         num_experts: int,
         layer_id: str,
         router_str: str = "linear",
-        training: bool = True,
         config: MoETConfig = MoETConfig(),
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
+        use_expert_choice: bool = True,
     ) -> None:
         super().__init__()
 
@@ -102,6 +102,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
+        self.use_expert_choice = use_expert_choice
 
         self.layer_id = layer_id
 
@@ -112,7 +113,6 @@ class GroupExpertChoiceMoELayer(nn.Module):
         self.router = Router(
             num_experts=num_experts,
             router_str=router_str,
-            training=training,
             config=config,
         )
 
@@ -138,6 +138,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
             experts = []
             for expert_num in range(self.num_experts):
+                # group_size experts share the same up layer. Each has a unique down layer.
                 expert_group_num = expert_num // group_size
                 experts.append(
                     nn.Sequential(
@@ -243,15 +244,19 @@ class GroupExpertChoiceMoELayer(nn.Module):
         # Get routing weights, h
         h = self.router(x, input_tokens)  # (b s) num_experts
 
-        # print("k", self.k)
-        # print("h", h.shape)
-
         S = t.softmax(h, dim=-1)  # bs num_experts
 
-        # In the moment that we pick the topk across the sequence dimension, we would be giving some information of the future to each token.
-        # We would be sharing information across the time dimensions which would be a problem for autoregressive models (it's allowing the model to cheat)
-        # So we include a mask to prevent this.
-        G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+        if self.use_expert_choice:
+            # Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
+            G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+        else:
+            # Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
+            # If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
+            # The only information that can be shared is that a token is dropped.
+            # Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
+            # Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
+            G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
+            raise NotImplementedError
 
         # Store cache for interpretability and loss function
         layer_cache = MoELayerCache(

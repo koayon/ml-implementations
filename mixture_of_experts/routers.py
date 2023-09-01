@@ -4,8 +4,8 @@ import torch as t
 from jaxtyping import Int
 from torch import nn
 from torch.nn.functional import one_hot
-from general import device
 
+from general import device
 from mixture_of_experts.config import MoEConfig
 from moet_experiment.moet_config import MoETConfig
 
@@ -66,6 +66,7 @@ class HashRouter(nn.Module):
         self, token_frequencies: Int[t.Tensor, "vocab_size k"]
     ) -> None:
         """Assigns each token to k experts in a way that balances the number of tokens assigned to each expert.
+        This is based on the token occurences in the training data.
 
         Parameters
         ----------
