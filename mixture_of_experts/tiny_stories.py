@@ -81,6 +81,7 @@ def download():
 
 def pretokenize(tokenizer: Encoding | PreTrainedTokenizerBase):
     def process_shard(shard):
+        print("Processing", shard)
         with open(shard, "r") as f:
             data = json.load(f)
         all_tokens = []
@@ -90,10 +91,14 @@ def pretokenize(tokenizer: Encoding | PreTrainedTokenizerBase):
             if isinstance(tokenizer, Encoding):
                 # For tiktoken
                 tokens = tokenizer.encode(text)  # encode the text
-            else:
+            elif isinstance(tokenizer, PreTrainedTokenizerBase):
                 # For hf transformers
-                tokens = tokenizer(text, return_tensors="pt")
+                tokens = tokenizer(text)["input_ids"]
+            else:
+                raise ValueError(f"Unknown tokenizer type {type(tokenizer)}")
+
             all_tokens.extend(tokens)
+        # print("all_tokens", all_tokens)
         # convert to uint16 nparray
         all_tokens = np.array(all_tokens, dtype=np.uint16)
         # write to disk
@@ -101,6 +106,8 @@ def pretokenize(tokenizer: Encoding | PreTrainedTokenizerBase):
         with open(tokenized_filename, "wb") as f:
             f.write(all_tokens.tobytes())
         print(f"Saved {tokenized_filename}")
+
+    print("Pre-tokenizing the dataset...")
 
     # iterate the shards and tokenize all of them one by one
     data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
@@ -121,9 +128,15 @@ class TinyStoriesDataset(IterableDataset):
         self.split = split
         self.max_seq_len = max_seq_len
 
-    def __len__(self):
-        # This is the number of blocks of size `block_size` in `data`
-        return 295739 // self.max_seq_len
+        if os.path.exists("data/TinyStories_all_data.tar.gz"):
+            pass
+        else:
+            raise FileNotFoundError("Please download the dataset first by running `python -m mixture_of_experts.tiny_stories.`")
+
+
+    # def __len__(self):
+    #     # This is the number of blocks of size `block_size` in `data`
+    #     return 295739 // self.max_seq_len
 
     def __iter__(self):
         # get worker info within a DataLoader
@@ -137,12 +150,15 @@ class TinyStoriesDataset(IterableDataset):
         data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
         shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.bin")))
         # train/test split. let's use only shard 0 for test split, rest train
+
         shard_filenames = (
             shard_filenames[1:] if self.split == "train" else shard_filenames[:1]
         )
+        print("Num shards:", len(shard_filenames))
         while True:
             random.shuffle(shard_filenames)
             for shard in shard_filenames:
+                print("Loading", shard)
                 # open the dataset for reading but keep it on disk with memmap
                 m = np.memmap(shard, dtype=np.uint16, mode="r")
                 num_batches = len(m) // self.max_seq_len
@@ -162,17 +178,24 @@ class TinyStoriesDataset(IterableDataset):
 
 
 if __name__ == "__main__":
-    # download()
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
-    pretokenize(tokenizer=tokenizer)
+    if os.path.exists("data/TinyStories_all_data.tar.gz"):
+        print("Dataset already downloaded")
+    else:
+        # pass
+        download()
+        tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
+        pretokenize(tokenizer=tokenizer)
+
     train_dataset = TinyStoriesDataset(split="train", max_seq_len=1024)
+
+    print("Dataset length:", len(train_dataset))
     train_dataloader = DataLoader(
         train_dataset,
-        sampler=RandomSampler(train_dataset, replacement=True),
         batch_size=12,
         shuffle=False,
         num_workers=0,
     )
+    print("Built dataloader")
     data_iter = iter(train_dataloader)
     X, y = next(data_iter)  # lis
     print(X.shape)
