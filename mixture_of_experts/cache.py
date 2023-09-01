@@ -5,22 +5,34 @@ import torch as t
 from jaxtyping import Float, Int
 from typeguard import typechecked
 
-
 # Initialise cache for routing and use for MoE layers
+
 @dataclass
-class MoELayerCache:
+class ExpertChoiceLayerCache():
     """G: softmaxed routing weights for the top k experts
     token_assignments: the top k expert ids
     routing_weights: raw outputs of the routing model (before softmax)
     """
 
     G: Float[t.Tensor, "k num_experts"]
-    token_assignments: Int[t.Tensor, "k num_experts"]
+    token_assignments: Int[t.Tensor, "k num_experts"] # token assignments here
+    routing_weights: Float[t.Tensor, "batch*seq num_experts"]
+
+@dataclass
+class TokenChoiceLayerCache():
+    """G: softmaxed routing weights for the top k experts
+    token_assignments: the top k expert ids
+    routing_weights: raw outputs of the routing model (before softmax)
+    """
+
+    G: Float[t.Tensor, "batch*seq k"]
+    expert_assignments: Int[t.Tensor, "batch*seq k"] # expert assignments here
     routing_weights: Float[t.Tensor, "batch*seq num_experts"]
 
 
+
 # @typechecked
-class MoEFullCache(Dict[str, MoELayerCache]):
+class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
     """Cache containing the G, routing weights and assignments for each layer.
 
     G is the softmaxed routing weights for the top k experts
@@ -30,17 +42,17 @@ class MoEFullCache(Dict[str, MoELayerCache]):
     routing_weights is the raw outputs of the routing model (before softmax)
     """
 
-    def __init__(self, moe_cache_dict: Dict[str, MoELayerCache]):
+    def __init__(self, moe_cache_dict: Dict[str, ExpertChoiceLayerCache]):
         super().__init__(moe_cache_dict)
 
-    def __setitem__(self, idx: str, cache: MoELayerCache) -> None:
-        assert isinstance(cache, MoELayerCache)
+    def __setitem__(self, idx: str, cache: ExpertChoiceLayerCache) -> None:
+        assert isinstance(cache, ExpertChoiceLayerCache)
         super().__setitem__(idx, cache)
 
         # Make sure the cache has consistent shapes even when the number of experts per layer varies
         self._pad_with_0s()
 
-    def __getitem__(self, __key: str) -> MoELayerCache:
+    def __getitem__(self, __key: str) -> ExpertChoiceLayerCache:
         return super().__getitem__(__key)
 
     @property
@@ -77,3 +89,7 @@ class MoEFullCache(Dict[str, MoELayerCache]):
                     [cache.routing_weights, routing_weight_zeros],
                     dim=1,
                 )
+
+class TokenChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
+    """Will be similar to the above. Decoupling the two for later processing."""
+    raise NotImplementedError
