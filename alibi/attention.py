@@ -154,8 +154,8 @@ class AlibiUnidirectionalAttention(nn.Module):
 
 if __name__ == "__main__":
     attention = AlibiUnidirectionalAttention(hidden_size=16, num_heads=4)
-    # x = t.randn(1, 5, 16)
-    # out = attention(x)
+    x = t.randn(1, 5, 16)
+    out = attention(x)
     # print(out)
     # print(out.shape)
     # print(get_alibi_mask(5))
