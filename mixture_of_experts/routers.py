@@ -4,6 +4,7 @@ import torch as t
 from jaxtyping import Int
 from torch import nn
 from torch.nn.functional import one_hot
+from general import device
 
 from mixture_of_experts.config import MoEConfig
 from moet_experiment.moet_config import MoETConfig
@@ -26,8 +27,15 @@ class HashRouter(nn.Module):
         self.vocab_size = config.vocab_size
         self.k = k
 
+        self.generator = t.Generator(device = device)
+
+        self.hash = self.build_random_hash()
+        self.hash.to(device)
+
+
     def forward(self, input: Int[t.Tensor, "bs"]) -> Int[t.Tensor, "bs k"]:
         "Takes in token ids and a hashing function and returns the expert num that each token should be assigned to."
+
         hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of bs
 
         top_k = t.stack(hashes, dim=-1)  # bs, k
@@ -38,7 +46,7 @@ class HashRouter(nn.Module):
 
         return out  # bs, num_experts
 
-    def build_random_hash(self, seed: int = 42):
+    def build_random_hash(self, seed: int = 42) -> t.Tensor:
         """Randomly assigns each token in vocabularly to k experts.
 
         Returns
@@ -47,13 +55,12 @@ class HashRouter(nn.Module):
             Hash function that maps tokens to k experts.
             A lookup table which given a token id returns a list of k expert ids.
         """
-        g = t.Generator()
-        g.manual_seed(seed)
+        self.generator.manual_seed(seed)
 
         hash = t.randint(
-            high=self.num_experts, size=(self.vocab_size, self.k), generator=g
+            high=self.num_experts, size=(self.vocab_size, self.k), generator=self.generator, device = device
         )
-        self.hash = hash
+        return hash
 
     def build_balanced_hash(
         self, token_frequencies: Int[t.Tensor, "vocab_size k"]
