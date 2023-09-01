@@ -34,7 +34,7 @@ class ExpertFFN(nn.Module):
         self.router = (
             router
             if router is not None
-            else nn.Linear(self.hidden_size, self.num_experts, device=device)
+            else nn.Linear(self.hidden_size, self.num_experts)
         )
         self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
         self.expert_dropout = nn.Dropout(config.expert_dropout)

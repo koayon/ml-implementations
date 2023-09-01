@@ -22,7 +22,7 @@ class MoEBlock(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.ln1 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
+        self.ln1 = nn.LayerNorm(normalized_shape=(config.hidden_size))
 
         self.attention_layer = UnidirectionalAttention(
             hidden_size=config.hidden_size,
@@ -30,7 +30,7 @@ class MoEBlock(nn.Module):
             dropout=config.attn_dropout,
         )
 
-        self.ln2 = nn.LayerNorm(normalized_shape=(config.hidden_size), device=device)
+        self.ln2 = nn.LayerNorm(normalized_shape=(config.hidden_size))
 
         self.expert_layer = (
             expert_layer

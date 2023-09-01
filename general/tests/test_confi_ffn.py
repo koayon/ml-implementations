@@ -2,9 +2,7 @@ import pytest
 import torch
 
 from general.confi_ffn import ConfiFFN
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DTYPE = torch.float32
+from general import device
 
 
 @pytest.mark.parametrize("hidden_size", [8, 16])
@@ -22,8 +20,6 @@ def test_confi_ffn(
     )
     x = torch.randn(
         (batch_size, seq_len, hidden_size),
-        device=DEVICE,
-        dtype=DTYPE,
         requires_grad=True,
     )
 

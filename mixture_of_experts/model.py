@@ -218,7 +218,7 @@ def top_tokens_for_expert(
 
     tokens = rearrange(input, "batch seq -> (batch seq)")
 
-    expert_tokens = tokens[tokens_indexes].unsqueeze(dim=1).cpu()  # k, 1
+    expert_tokens = tokens[tokens_indexes].unsqueeze(dim=1)  # k, 1
 
     str_tokens = tokeniser.decode_batch(expert_tokens.tolist())
 

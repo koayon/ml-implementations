@@ -84,7 +84,7 @@ class Trainer:
         self.optimiser_string = optimiser_string
         self.Optimiser = OPTIMISERS[optimiser_string]
         if max_iters:
-            self.config.max_iters = max_iters
+            self.config.max_steps = max_iters
         self.model_name = model_name
         if model_load_path:
             _model, self.optimiser = self.load_model(model_load_path)
@@ -289,7 +289,7 @@ class Trainer:
                     )
 
                 sample_batch_num += 1
-                if sample_batch_num > self.config.max_iters:
+                if sample_batch_num > self.config.max_steps:
                     checkpoint = {
                         "model": model.state_dict(),
                         "optimizer": optimiser.state_dict(),
@@ -302,7 +302,7 @@ class Trainer:
                         model_name=f"{self.model_name}/post_training",
                     )
                     break
-                print(f"Sample batch num: {sample_batch_num}/{self.config.max_iters}")
+                print(f"Sample batch num: {sample_batch_num}/{self.config.max_steps}")
 
                 if sample_batch_num % self.config.eval_steps == 0:
                     # Evaluate model

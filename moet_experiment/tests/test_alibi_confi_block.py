@@ -2,9 +2,7 @@ import pytest
 import torch as t
 
 from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
-
-DEVICE = t.device("cuda" if t.cuda.is_available() else "cpu")
-DTYPE = t.float32
+from general import device
 
 
 @pytest.mark.parametrize("layer_index", [0])
@@ -26,8 +24,6 @@ def test_alibi_confi_t_block(
     )
     x = t.randn(
         (batch_size, seq_len, hidden_size),
-        device=DEVICE,
-        dtype=DTYPE,
         requires_grad=True,
     )
 
@@ -52,11 +48,11 @@ def test_alibi_confi_t_block_exceptions():
     )
 
     # Test wrong input dimension
-    x = t.randn((1, 4, 16), device=DEVICE, dtype=DTYPE)
+    x = t.randn((1, 4, 16))
     with pytest.raises(RuntimeError):
         transformer_block(x)
 
     # Test invalid number of dimensions
-    x = t.randn((1, 4, 2, 8), device=DEVICE, dtype=DTYPE)
+    x = t.randn((1, 4, 2, 8))
     with pytest.raises(ValueError):
         transformer_block(x)

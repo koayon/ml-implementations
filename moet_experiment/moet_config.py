@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 class MoETConfig:
     "Constants used for the MoET model."
 
+    model_name: str = "MoET"
+
     # Model
     tokenizer_string: str = "roneneldan/TinyStories-8M"
     activation_function: str = "silu"
@@ -38,21 +40,34 @@ class MoETConfig:
     eval_capacity_factor: float = 2.0
 
     # Training parameters
-    max_iters: int = 100
+    max_steps: int = 4000 # 2M in TinyStories
     num_epochs: int = 1
-    learning_rate: float = 0.001
 
-    batch_size: int = 16
+    learning_rate: float = 0.001
+    weight_decay: float = 0.01
+    warmup_steps: int = 100
+
+    batch_size: int = 32
     train_test_split: float = 0.99
-    block_size: int = 64
+    block_size: int = 256
+
+    eval_steps: int = 100
+    logging_steps: int = 10
+    save_steps: int = 400
 
     sophia_hessian_update_steps: int = 10
-    eval_steps: int = 10
+
 
     def __str__(self) -> str:
-        out = "MoEConfig:\n\n"
+        out = "MoETConfig:\n\n"
         out += "\n".join(f"{k}={str(v)}" for k, v in asdict(self).items())
         return out
+
+    def __dict__(self):
+        return asdict(self)
+
+    def to_dict(self):
+        return asdict(self)
 
 
 if __name__ == "__main__":

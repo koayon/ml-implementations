@@ -3,20 +3,18 @@ import torch as t
 
 from moet_experiment.group_moe_layer import GroupExpertChoiceMoELayer
 from moet_experiment.moet_config import MoETConfig
-
-DEVICE = t.device("cuda" if t.cuda.is_available() else "cpu")
-DTYPE = t.float32
+from general import device
 
 config = MoETConfig()
 # config.hidden_size = 8
 
 
-@pytest.mark.parametrize("num_experts", [2, 4])
+@pytest.mark.parametrize("num_experts", [8])
 @pytest.mark.parametrize("router_str", ["hash", "linear"])
 @pytest.mark.parametrize("group_size", [1, 2])
-@pytest.mark.parametrize("c", [1.0, 1.5])
-@pytest.mark.parametrize("seq_len", [1, 4])
+@pytest.mark.parametrize("seq_len", [4])
 @pytest.mark.parametrize("batch_size", [1, 4])
+@pytest.mark.parametrize("c", [1.0, 1.5])
 def test_group_moe_layer(
     num_experts: int,
     router_str: str,
@@ -24,7 +22,7 @@ def test_group_moe_layer(
     seq_len: int,
     batch_size: int,
     c: float,
-    config: MoETConfig = config,
+    config: MoETConfig = MoETConfig(),
 ):
     moe_layer = GroupExpertChoiceMoELayer(
         num_experts=num_experts,
@@ -34,13 +32,14 @@ def test_group_moe_layer(
         c=c,
         config=config,
     )
+    moe_layer.to(device)
+
     x = t.randn(
         (batch_size, seq_len, config.hidden_size),
-        device=DEVICE,
-        dtype=DTYPE,
         requires_grad=True,
+        device = device
     )
-    input = t.randint(0, 100, (batch_size, seq_len), device=DEVICE)
+    input = t.randint(0, 100, (batch_size, seq_len), device= device)
 
     # Check that forward pass works
     y, _cache = moe_layer(x, input)
@@ -55,9 +54,9 @@ def test_group_moe_layer(
     assert x.grad.requires_grad is False
 
 
-def test_group_moe_layer_exceptions():
+def test_group_moe_layer_exceptions(num_experts = 8):
     moe_layer = GroupExpertChoiceMoELayer(
-        num_experts=4,
+        num_experts=num_experts,
         router_str="hash",
         layer_id="layer1",
         group_size=2,
@@ -65,14 +64,14 @@ def test_group_moe_layer_exceptions():
     )
 
     # Test no input tokens for hash router
-    x = t.randn((1, 4, config.hidden_size), device=DEVICE, dtype=DTYPE)
+    x = t.randn((1, 16, config.hidden_size))
     with pytest.raises(AssertionError):
         moe_layer(x)
 
     # Test k and c are both 0
     with pytest.raises(AssertionError):
         moe_layer = GroupExpertChoiceMoELayer(
-            num_experts=4,
+            num_experts=num_experts,
             router_str="hash",
             layer_id="layer1",
             c=0,

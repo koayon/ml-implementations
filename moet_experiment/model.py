@@ -108,7 +108,7 @@ class MoET(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, input: t.Tensor) -> Tuple[t.Tensor, MoEFullCache]:
+    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, **kwargs) -> Tuple[t.Tensor, MoEFullCache]:
         """
         x: batch seq_length
         """
@@ -116,12 +116,12 @@ class MoET(nn.Module):
         # Get position of tokens
 
         # Get token embeddings. Note since we're using ALiBI there are no positional embeddings here
-        x = self.token_embedding(input)
+        x = self.token_embedding(input_ids)
 
         for idx, layer in self.sequential_layers.named_children():
             # Layer types are MoETBlock (hash), MoETBlock (learned), ALiBiTransformerBlock
             if idx.startswith("moe_block_hash"):
-                x, moe_layer_cache = layer(x, input)
+                x, moe_layer_cache = layer(x, input_ids)
             elif idx.startswith("moe"):
                 x, moe_layer_cache = layer(x)
                 self.cache[idx] = moe_layer_cache
@@ -134,8 +134,11 @@ class MoET(nn.Module):
 
         return out, self.cache
 
-    def load_model(self, model_path: str):
+    def load(self, model_path: str):
         self.load_state_dict(t.load(model_path))
+
+    def save(self, model_path: str):
+        t.save(self.state_dict(), model_path)
 
 
 def main():

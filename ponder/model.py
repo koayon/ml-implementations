@@ -85,7 +85,7 @@ class PonderNet(nn.Module):
         # Map which generates probabilities for each layer
         self.probs_proj = nn.ModuleList(
             [
-                nn.Linear(in_features=config.hidden_size, out_features=1, device=device)
+                nn.Linear(in_features=config.hidden_size, out_features=1)
                 for _ in range(config.num_layers)
             ]
         )
@@ -124,7 +124,7 @@ class PonderNet(nn.Module):
         # Combine the token and position embeddings for the embedding layer
         tokens = self.token_embedding(x)  # (batch, seq, hidden_size)
         positions = self.pos_embedding(
-            t.arange(seq_len, device=device)
+            t.arange(seq_len)
         )  # (batch, seq, hidden_size)
         x = tokens + positions
         x = self.dropout(x)  # batch, seq, hidden_size

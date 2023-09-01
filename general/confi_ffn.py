@@ -34,7 +34,7 @@ class StrengthDial(nn.Module):
             strength = strength[:, :, 0:1]  # (batch, seq, 1)
         else:
             strength = F.sigmoid(strength_logits / self.alpha)
-        print(strength.shape)
+        # print(strength.shape)
         # If dropout instead of default dropping the layer, we default to using the layer with the 1 - prob
         strength = 1 - self.strength_dropout(strength)  # (batch, seq, 1)
 
