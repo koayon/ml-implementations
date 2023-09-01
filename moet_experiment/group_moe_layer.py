@@ -1,9 +1,7 @@
 from dataclasses import dataclass
-from turtle import down
 from typing import Any, Optional, Tuple, Union
 
 import torch as t
-from click import group
 from einops import rearrange, repeat
 from torch import nn
 from torch.nn import functional as F
@@ -20,22 +18,77 @@ RATIO = 2 / 3
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
-config = MoETConfig()
+# config = MoETConfig()
+
+class Router(nn.Module):
+    def __init__(self, *, num_experts: int, router_str: str, training: bool, config: MoETConfig):
+        super().__init__()
+        self.config = config
+
+        self.router_str = router_str
+        self.router_temperature = config.router_temperature
+        self.num_experts = num_experts
+        self.hidden_size = config.hidden_size
+        self.training = training
+
+        if router_str in ("linear", "learned"):
+            # Define the linear router
+            self.linear = nn.Linear(self.hidden_size, self.num_experts)
+        elif router_str == "hash":
+            # Build the hash router
+            assert config.num_experts_hash == self.num_experts
+            self.hash_router = HashRouter(config=config, num_experts=config.num_experts_hash)
+            # self.hash_router.build_random_hash()
+        else:
+            raise ValueError(f"Unknown router {router_str}. Please choose from {ROUTERS}")
+
+        self.routing_dropout = nn.Dropout(config.routing_dropout)
+
+    def forward(self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None) -> t.Tensor:
+            """
+            Parameters:
+            x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
+            input_tokens (Optional[t.IntTensor]): Original input tokens required if router_str is "hash". Shape (batch_size, hidden_size).
+
+            Returns:
+            t.Tensor: Mapping from input tokens to experts. Shape (batch_size, num_experts).
+
+            Raises:
+            AssertionError: If router_str is "hash" and input_tokens is None.
+            """
+
+            if self.router_str == "hash":
+                assert input_tokens is not None
+
+                input_tokens = rearrange(input_tokens, "b s -> (b s)")
+                clean_h = self.hash_router(input_tokens).float()  # bs num_experts
+            else:
+                clean_h = self.linear(x).float()  # bs num_experts
+
+            clean_h = self.routing_dropout(clean_h)  # bs num_experts
+
+            # Add gumbel noise to the routing logits to encourage exploration during training
+            if self.training:
+                gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
+                h = (clean_h + gumbel_noise) / self.router_temperature
+                return h # bs num_experts
+            else:
+                return clean_h # bs num_experts
 
 
 class GroupExpertChoiceMoELayer(nn.Module):
     experts: nn.ModuleList
     up_experts: list[nn.Module]
     down_experts: list[nn.Module]
-    router: nn.Module
 
     def __init__(
         self,
         *,
         num_experts: int,
-        router_str: str,
         layer_id: str,
-        config: MoETConfig = config,
+        router_str: str = "linear",
+        training: bool = True,
+        config: MoETConfig = MoETConfig(),
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
@@ -48,31 +101,28 @@ class GroupExpertChoiceMoELayer(nn.Module):
         assert router_str in ROUTERS
 
         self.num_experts = num_experts
-
-        self.hidden_size = config.hidden_size
         self.num_expert_groups = num_experts // group_size
 
-        self.context_size = config.max_position_embeddings
         self.layer_id = layer_id
+
+        self.hidden_size = config.hidden_size
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
-        self.router_str = router_str
-        self.router_temperature = config.router_temperature
 
-        if router_str in ("linear", "learned"):
-            self.router = nn.Linear(self.hidden_size, self.num_experts, device=device)
-        elif router_str == "hash":
-            self.router = HashRouter(config=config, num_experts=config.num_experts_hash)
-            self.router.build_random_hash()
-
-        self.routing_dropout = nn.Dropout(config.routing_dropout)
+        self.router = Router(
+            num_experts=num_experts,
+            router_str=router_str,
+            training=training,
+            config=config,
+        )
 
         if group_size > 1:
+
+            # Grouped experts
             up_experts = [
                 nn.Linear(
                     in_features=self.hidden_size,
                     out_features=int(self.hidden_size * MULT * RATIO),
-                    device=device,
                 )
                 for _ in range(self.num_expert_groups)
             ]
@@ -80,7 +130,6 @@ class GroupExpertChoiceMoELayer(nn.Module):
                 nn.Linear(
                     in_features=int(self.hidden_size * MULT * RATIO),
                     out_features=self.hidden_size,
-                    device=device,
                 )
                 for _ in range(self.num_experts)
             ]
@@ -100,13 +149,18 @@ class GroupExpertChoiceMoELayer(nn.Module):
                 )
             self.experts = nn.ModuleList(experts)
         else:
+
+            # Regular FFN experts
             expert = SwiGLUFFN(
                 in_features=self.hidden_size, dropout=config.expert_dropout
             )
             self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
 
-        self.k = k
-        self.c = c
+        # Use the capacity factor to set k
+        if c > 0:
+            self.k = int(self.batch_size * self.seq_len * c // self.num_experts)
+        else:
+            self.k = k
 
     def forward_individual_expert_choice(
         self,
@@ -115,18 +169,29 @@ class GroupExpertChoiceMoELayer(nn.Module):
         G: t.Tensor,
         x: t.Tensor,
     ) -> t.Tensor:
-        """
-        Set up to be parallelisable
-        expert_num: The expert that we're using for forward
-        chosen_token_index: k num_experts
-        G: k num_experts
-        x: bs hidden_size
+        """_summary_
+
+        Parameters
+        ----------
+        expert_num : int
+            The expert that we're using for forward
+        chosen_token_index : t.Tensor
+            Shape (k, num_experts)
+        G : t.Tensor
+            Shape (k, num_experts)
+        x : t.Tensor
+            Shape (bs hidden_size)
+
+        Returns
+        -------
+        t.Tensor
+            Shape (bs hidden_size)
         """
 
         batch_seq_size = x.shape[0]
 
         # Select top-k expert, with one-hot vector. P is the permutation matrix
-        P: t.Tensor = nn.functional.one_hot(
+        P: t.Tensor = F.one_hot(
             chosen_token_index, num_classes=batch_seq_size
         )  # k num_experts (one-hot)
 
@@ -139,6 +204,10 @@ class GroupExpertChoiceMoELayer(nn.Module):
         tokens_for_expert = einsum(
             "bs k, bs hidden_size -> k hidden_size", P_expert, x
         )  # k hidden_size
+
+        # TODO: All of above could be moved to forward (or another method) so that this
+        # function represents the abstraction boundary of "things which happen on the expert GPU"
+        # It also seems like this could all be done in one go with tensors rather than per expert
 
         # Forward pass through the expert network
         E = self.experts[expert_num](tokens_for_expert)
@@ -164,33 +233,24 @@ class GroupExpertChoiceMoELayer(nn.Module):
             cache: MoELayerCache: G, token_assignments, routing_weights
         """
 
-        batch_dim, seq_length, _hidden_size = x.shape
-
-        # Use the capacity factor to set k
-        if self.c > 0:
-            self.k = int(self.batch_size * self.seq_len * self.c // self.num_experts)
-            pass
+        batch_size, seq_len, _hidden_size = x.shape
 
         # If there aren't enough tokens in the input to select top k, reduce k
-        self.k = min(int(self.k), (batch_dim * seq_length))
-        # self.k = 4
+        self.k = min(int(self.k), (batch_size * seq_len))
 
         x = rearrange(x, "b s h -> (b s) h")
-        if self.router_str == "hash":
-            assert input_tokens is not None
 
-            input_tokens = rearrange(input_tokens, "b s -> (b s)")
-            clean_h = self.router(input_tokens).float()  # bs num_experts
-            clean_h = self.routing_dropout(clean_h)  # bs num_experts
-        else:
-            clean_h = self.router(x).float()  # bs num_experts
-            clean_h = self.routing_dropout(clean_h)  # bs num_experts
+        # Get routing weights, h
+        h = self.router(x, input_tokens)  # (b s) num_experts
 
-        # Add gumbel noise to the routing logits to encourage exploration
-        gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
-        h = (clean_h + gumbel_noise) / self.router_temperature
+        # print("k", self.k)
+        # print("h", h.shape)
 
         S = t.softmax(h, dim=-1)  # bs num_experts
+
+        # In the moment that we pick the topk across the sequence dimension, we would be giving some information of the future to each token.
+        # We would be sharing information across the time dimensions which would be a problem for autoregressive models (it's allowing the model to cheat)
+        # So we include a mask to prevent this.
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         # Store cache for interpretability and loss function
@@ -214,7 +274,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
         )  # num_experts bs hidden_size
         y = t.sum(expert_results_stack, dim=0)  # bs hidden_size
 
-        y = rearrange(y, "(b s) h -> b s h", b=batch_dim)  # batch seq hidden_size
+        y = rearrange(y, "(b s) h -> b s h", b=batch_size)  # batch seq hidden_size
 
         return y, layer_cache
 
