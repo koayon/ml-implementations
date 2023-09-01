@@ -249,6 +249,21 @@ class GroupExpertChoiceMoELayer(nn.Module):
         if self.use_expert_choice:
             # Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
             G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+
+            # Store cache for interpretability and loss function
+            layer_cache = MoELayerCache(
+                G=G,
+                token_assignments=chosen_token_index,
+                routing_weights=h,
+            )
+
+            # Collect expert results from parallelised expert forward
+            expert_results = [
+                self.forward_individual_expert_choice(
+                    expert_num=expert_num, G=G, x=x, chosen_token_index=chosen_token_index
+                )
+                for expert_num in range(self.num_experts)
+            ]  # expert list[bs hidden_size]
         else:
             # Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
             # If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
@@ -257,21 +272,6 @@ class GroupExpertChoiceMoELayer(nn.Module):
             # Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
             G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
             raise NotImplementedError
-
-        # Store cache for interpretability and loss function
-        layer_cache = MoELayerCache(
-            G=G,
-            token_assignments=chosen_token_index,
-            routing_weights=h,
-        )
-
-        # Collect expert results from parallelised expert forward
-        expert_results = [
-            self.forward_individual_expert_choice(
-                expert_num=expert_num, G=G, x=x, chosen_token_index=chosen_token_index
-            )
-            for expert_num in range(self.num_experts)
-        ]  # expert list[bs hidden_size]
 
         # Aggregate expert results together
         expert_results_stack = t.stack(
