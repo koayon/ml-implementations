@@ -1,5 +1,4 @@
 import os
-from doctest import debug
 from typing import List, Optional
 
 import evaluate
@@ -7,14 +6,10 @@ import pandas as pd
 import torch as t
 from datasets import Dataset, DatasetDict, load_dataset
 from einops import rearrange
-from librosa import ex
 from torch import nn
 from torch.nn import functional as F
 from transformers import (
     AutoTokenizer,
-    GenerationConfig,
-    PretrainedConfig,
-    PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
     TrainingArguments,
@@ -22,6 +17,7 @@ from transformers import (
 
 import wandb
 from mixture_of_experts.tiny_stories import TinyStoriesDataset
+from moet_experiment.hf_model import MoET_hf, MoETHFConfig
 from moet_experiment.model import MoET
 from moet_experiment.moet_config import MoETConfig
 
@@ -172,49 +168,12 @@ def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame)
 
         print("Saved to evals.csv")
 
-class MoETHFConfig(PretrainedConfig):
-
-    def __init__(
-        self,
-        block_type="MoE",
-        layers: int = 8,
-        **kwargs,
-    ):
-
-        self.block_type = block_type
-        self.layers = layers
-        super().__init__(**kwargs)
-
-class MOETHFModel(PreTrainedModel):
-    def __init__(self, hf_config: MoETHFConfig):
-        super().__init__(hf_config)
-        self.hf_config = hf_config
-
-        self.model = MoET()
-
-    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, return_loss: bool = True, **kwargs):
-        logits, _moe_cache = self.model(input_ids, attention_mask)
-        if return_loss:
-            labels = input_ids[:, 1:]
-            pred_logits = logits[:, :-1, :]
-
-            flattened_logits = rearrange(pred_logits, "b s v -> (b s) v")
-            flattened_labels = rearrange(labels, "b s -> (b s)")
-
-            loss = F.cross_entropy(flattened_logits, flattened_labels)
-
-            return {"loss": loss, "logits": logits}
-        else:
-            return {"logits": logits}
-
 
 def main():
     config = MoETConfig()
 
-    # model = MoET(config = config)
-
     hf_config = MoETHFConfig()
-    model = MOETHFModel(hf_config=hf_config) # hf wrapped model
+    model = MoET_hf(hf_config=hf_config) # hf wrapped model
 
 
     tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
@@ -251,7 +210,7 @@ def main():
     if EVALUATE:
         evaluate_model(trainer = trainer, config = config, evals_df = evals_df)
 
-    prompt = eval_dataset.select(list(range(100,101)))
+    prompt = eval_dataset.select([100])
     output = trainer.predict(prompt)
     print("Prompt: ", prompt)
     print("Output: ", output)
