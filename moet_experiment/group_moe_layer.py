@@ -3,6 +3,7 @@ from typing import Any, Optional, Tuple, Union
 
 import torch as t
 from einops import rearrange, repeat
+from jaxtyping import Float, Int
 from numpy import cumsum
 from torch import nn
 from torch.nn import functional as F
@@ -74,7 +75,7 @@ class Router(nn.Module):
 
             # Add gumbel noise to the routing logits to encourage exploration during training
             # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
-            if self.training:
+            if self.training and (self.router_str in ("learned", "linear")):
                 gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
                 h = (clean_h + gumbel_noise) / self.router_temperature
                 return h # bs num_experts
@@ -169,20 +170,6 @@ class GroupMoELayer(nn.Module):
         else:
             self.k = k
 
-    def get_first_drop_point(self, a: t.Tensor, k: int):
-        # All the indices where we need to drop
-        indices = t.nonzero(a >= k)
-
-        # Intialise drop_points as -1s for each expert (no dropping)
-        drop_points = -t.ones(a.shape[0])
-
-        for expert_num, token_num in indices:
-            # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it
-            if drop_points[expert_num] == -1:
-                drop_points[expert_num] = token_num
-
-        return drop_points
-
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
     ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
@@ -223,34 +210,16 @@ class GroupMoELayer(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
 
         if self.use_expert_choice:
-            # Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
-
-            G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+            G, chosen_token_index, P = self._expert_choice_routing_matrices(S = S, batch_size = batch_size, seq_len = seq_len)
 
             layer_cache = ExpertChoiceLayerCache(
-                G=G,
-                token_assignments=chosen_token_index,
-                routing_weights=h,
-            )
-
-            # Select top-k expert, with one-hot vector. P is the permutation matrix
-            P: t.Tensor = F.one_hot(
-                chosen_token_index, num_classes=batch_size * seq_len
-            )  # k num_experts bs (one-hot)
-
-            P = rearrange(P, "k num_experts bs -> bs k num_experts").float()  # bs k num_experts
+                    G=G,
+                    token_assignments=chosen_token_index,
+                    routing_weights=h,
+                )
 
         else:
-            # We use left-to-right token dropping.
-            # TODO: Add random token-dropping.
-
-            # Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
-            # If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
-            # The only information that can be shared is that a token is dropped.
-            # Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
-            # Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
-
-            G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
+            G, chosen_expert_index, P = self._token_choice_routing_matrices(S = S)
 
             layer_cache = TokenChoiceLayerCache(
                 G=G,
@@ -258,25 +227,6 @@ class GroupMoELayer(nn.Module):
                 routing_weights=h,
             )
 
-            # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
-
-            # Select top-k expert, with one-hot vector
-            P = nn.functional.one_hot(
-                chosen_expert_index,
-            )  # bs k num_experts (one-hot)
-            tokens_per_expert = t.sum(P, dim=1)  # bs num_experts
-
-            cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # bs num_experts
-
-            cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "bs num_experts -> num_experts bs")
-
-            drop_points = self.get_first_drop_point(cumsum_tokens_per_expert, self.k)
-
-            for expert_num in range(self.num_experts):
-                # Set everything after the drop point to 0
-                P[drop_points[expert_num]:, :, expert_num] = 0 # bs k num_experts
-
-            # Now P defines a permutation matrix where each expert gets at most k tokens.
 
         tokens_for_expert = einsum(
                 "bs k expert, bs hidden_size -> expert k hidden_size", P, x
@@ -295,6 +245,106 @@ class GroupMoELayer(nn.Module):
         y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
 
         return y, layer_cache
+
+    def _get_first_drop_point(self, P: t.Tensor, k: int) -> t.Tensor:
+        """_summary_
+
+        Parameters
+        ----------
+        P : t.Tensor
+            Permutation matrix
+        k : int
+            Maximum number of experts per token
+
+        Returns
+        -------
+        t.Tensor
+           Drop points: The number of tokens after which each expert is full and drops any later tokens
+        """
+
+        tokens_per_expert = t.sum(P, dim=1)  # bs num_experts
+
+        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # bs num_experts
+        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "bs num_experts -> num_experts bs")
+        # All the indices where we need to drop
+        indices = t.nonzero(cumsum_tokens_per_expert >= k)
+
+        # Intialise drop_points as -1s for each expert (no dropping)
+        drop_points = -t.ones(cumsum_tokens_per_expert.shape[0])
+
+        for expert_num, token_num in indices:
+            # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it
+            if drop_points[expert_num] == -1:
+                drop_points[expert_num] = token_num
+
+        return drop_points
+
+    def _expert_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+        """Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
+
+        Parameters
+        ----------
+        S : Float[t.Tensor, "bs num_experts"]
+            _description_
+
+        Returns
+        -------
+        Tuple[t.Tensor, t.Tensor, t.Tensor]
+            G, chosen_token_index, P
+        """
+
+        G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+
+        # Select top-k expert, with one-hot vector. P is the permutation matrix
+        P: t.Tensor = F.one_hot(
+            chosen_token_index, num_classes=batch_size * seq_len
+        )  # k num_experts bs (one-hot)
+
+        P = rearrange(P, "k num_experts bs -> bs k num_experts").float()  # bs k num_experts
+
+        return G, chosen_token_index, P
+
+    def _token_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"]) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+        """We use left-to-right token dropping.
+
+            Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
+            If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
+            The only information that can be shared is that a token is dropped.
+            Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
+            Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
+
+            TODO: Add random token-dropping.
+
+
+        Parameters
+        ----------
+        S : Float[t.Tensor, "bs num_experts"]
+            _description_
+
+        Returns
+        -------
+        Tuple[t.Tensor, t.Tensor, t.Tensor]
+            G, chosen_expert_index, P
+        """
+
+        G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
+
+        # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
+
+        # Select top-k expert, with one-hot vector
+        P = nn.functional.one_hot(
+            chosen_expert_index,
+        )  # bs k num_experts (one-hot)
+
+        drop_points = self._get_first_drop_point(P = P, k = self.k)
+
+        for expert_num in range(self.num_experts):
+            # Set everything after the drop point to 0
+            P[drop_points[expert_num]:, :, expert_num] = 0 # bs k num_experts
+
+        # Now P defines a permutation matrix where each expert gets at most k tokens.
+
+        return G, chosen_expert_index, P
 
 
 def main():
