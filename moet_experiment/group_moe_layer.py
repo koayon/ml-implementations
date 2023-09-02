@@ -51,36 +51,36 @@ class Router(nn.Module):
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
     def forward(self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None) -> t.Tensor:
-            """
-            Parameters:
-            x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
-            input_tokens (Optional[t.IntTensor]): Original input tokens required if router_str is "hash". Shape (batch_size, hidden_size).
+        """
+        Parameters:
+        x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
+        input_tokens (Optional[t.IntTensor]): Original input tokens required if router_str is "hash". Shape (batch_size, hidden_size).
 
-            Returns:
-            t.Tensor: Mapping from input tokens to experts. Shape (batch_size, num_experts).
+        Returns:
+        t.Tensor: Mapping from input tokens to experts. Shape (batch_size, num_experts).
 
-            Raises:
-            AssertionError: If router_str is "hash" and input_tokens is None.
-            """
+        Raises:
+        AssertionError: If router_str is "hash" and input_tokens is None.
+        """
 
-            if self.router_str == "hash":
-                assert input_tokens is not None
+        if self.router_str == "hash":
+            assert input_tokens is not None
 
-                input_tokens = rearrange(input_tokens, "b s -> (b s)")
-                clean_h = self.hash_router(input_tokens)  # bs num_experts
-            else:
-                clean_h = self.linear(x)  # bs num_experts
+            input_tokens = rearrange(input_tokens, "b s -> (b s)")
+            clean_h = self.hash_router(input_tokens)  # bs num_experts
+        else:
+            clean_h = self.linear(x)  # bs num_experts
 
-            clean_h = self.routing_dropout(clean_h)  # bs num_experts
+        clean_h = self.routing_dropout(clean_h)  # bs num_experts
 
-            # Add gumbel noise to the routing logits to encourage exploration during training
-            # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
-            if self.training and (self.router_str in ("learned", "linear")):
-                gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
-                h = (clean_h + gumbel_noise) / self.router_temperature
-                return h # bs num_experts
-            else:
-                return clean_h # bs num_experts
+        # Add gumbel noise to the routing logits to encourage exploration during training
+        # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
+        if self.training and (self.router_str in ("learned", "linear")):
+            gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
+            h = (clean_h + gumbel_noise) / self.router_temperature
+            return h # bs num_experts
+        else:
+            return clean_h # bs num_experts
 
 
 class GroupMoELayer(nn.Module):
@@ -246,43 +246,6 @@ class GroupMoELayer(nn.Module):
 
         return y, layer_cache
 
-    def _get_first_drop_point(self, P: t.Tensor, k: int) -> t.Tensor:
-        """_summary_
-
-        Parameters
-        ----------
-        P : t.Tensor
-            Permutation matrix [bs k num_experts]
-        k : int
-            Maximum number of experts per token
-        batch_size: int
-            Batch size
-        seq_len: int
-            Current sequence length
-
-        Returns
-        -------
-        t.Tensor
-           Drop points: The number of tokens after which each expert is full and drops any later tokens
-        """
-
-        tokens_per_expert = t.sum(P, dim=1)  # sb num_experts
-
-        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # sb num_experts
-        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
-        # All the indices where we need to drop
-        indices = t.nonzero(cumsum_tokens_per_expert >= k)
-
-        # Intialise drop_points as -1s for each expert (no dropping)
-        drop_points = -t.ones(cumsum_tokens_per_expert.shape[0])
-
-        for expert_num, token_num in indices:
-            # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it
-            if drop_points[expert_num] == -1:
-                drop_points[expert_num] = token_num
-
-        return drop_points
-
     def _expert_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
 
@@ -356,6 +319,43 @@ class GroupMoELayer(nn.Module):
         P = rearrange(P, "(s b) k num_experts -> (b s) k num_experts", b = batch_size) # bs k num_experts
 
         return G, chosen_expert_index, P
+
+    def _get_first_drop_point(self, P: t.Tensor, k: int) -> t.Tensor:
+        """_summary_
+
+        Parameters
+        ----------
+        P : t.Tensor
+            Permutation matrix [sb k num_experts]
+        k : int
+            Maximum number of experts per token
+        batch_size: int
+            Batch size
+        seq_len: int
+            Current sequence length
+
+        Returns
+        -------
+        t.Tensor
+        Drop points: The number of tokens after which each expert is full and drops any later tokens
+        """
+
+        tokens_per_expert = t.sum(P, dim=1)  # sb num_experts
+
+        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # sb num_experts
+        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
+        # All the indices where we need to drop
+        indices = t.nonzero(cumsum_tokens_per_expert >= k)
+
+        # Intialise drop_points as -1s for each expert (no dropping)
+        drop_points = -t.ones(cumsum_tokens_per_expert.shape[0])
+
+        for expert_num, token_num in indices:
+            # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it
+            if drop_points[expert_num] == -1:
+                drop_points[expert_num] = token_num
+
+        return drop_points
 
 
 def main():
