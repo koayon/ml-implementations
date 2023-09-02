@@ -219,7 +219,7 @@ class GroupMoELayer(nn.Module):
                 )
 
         else:
-            G, chosen_expert_index, P = self._token_choice_routing_matrices(S = S)
+            G, chosen_expert_index, P = self._token_choice_routing_matrices(S = S, batch_size=batch_size)
 
             layer_cache = TokenChoiceLayerCache(
                 G=G,
@@ -252,9 +252,13 @@ class GroupMoELayer(nn.Module):
         Parameters
         ----------
         P : t.Tensor
-            Permutation matrix
+            Permutation matrix [bs k num_experts]
         k : int
             Maximum number of experts per token
+        batch_size: int
+            Batch size
+        seq_len: int
+            Current sequence length
 
         Returns
         -------
@@ -262,10 +266,10 @@ class GroupMoELayer(nn.Module):
            Drop points: The number of tokens after which each expert is full and drops any later tokens
         """
 
-        tokens_per_expert = t.sum(P, dim=1)  # bs num_experts
+        tokens_per_expert = t.sum(P, dim=1)  # sb num_experts
 
-        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # bs num_experts
-        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "bs num_experts -> num_experts bs")
+        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # sb num_experts
+        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
         # All the indices where we need to drop
         indices = t.nonzero(cumsum_tokens_per_expert >= k)
 
@@ -304,16 +308,16 @@ class GroupMoELayer(nn.Module):
 
         return G, chosen_token_index, P
 
-    def _token_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"]) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+    def _token_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """We use left-to-right token dropping.
 
-            Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
-            If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
-            The only information that can be shared is that a token is dropped.
-            Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
-            Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
+        Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
+        If we balance the experts enough with our load-balancing and set a sufficiently high k, then there is very little information shared across the sequence dimension.
+        The only information that can be shared is that a token is dropped.
+        Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
+        Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
 
-            TODO: Add random token-dropping.
+        TODO: Add random token-dropping.
 
 
         Parameters
@@ -336,13 +340,20 @@ class GroupMoELayer(nn.Module):
             chosen_expert_index,
         )  # bs k num_experts (one-hot)
 
+        # We want to rearrange P. Currently we have a long line of bs such that we see all of the first batch before we see any of the second batch. We would like to see the first elements from all batches then second elements etc.
+        # This means there's less variance in performance depending on where you happen to be within a batch
+        P = rearrange(P, "(b s) k num_experts -> (s b k num_experts", b = batch_size)  # sb k num_experts
+
         drop_points = self._get_first_drop_point(P = P, k = self.k)
 
         for expert_num in range(self.num_experts):
             # Set everything after the drop point to 0
-            P[drop_points[expert_num]:, :, expert_num] = 0 # bs k num_experts
+            P[drop_points[expert_num]:, :, expert_num] = 0 # sb k num_experts
 
         # Now P defines a permutation matrix where each expert gets at most k tokens.
+
+        # Rearrange P back to the usual shape
+        P = rearrange(P, "(s b) k num_experts -> (b s) k num_experts", b = batch_size) # bs k num_experts
 
         return G, chosen_expert_index, P
 
