@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 from typing import List, Optional
 
 import evaluate
@@ -6,6 +7,7 @@ import pandas as pd
 import torch as t
 from datasets import Dataset, DatasetDict, load_dataset
 from einops import rearrange
+from evaluate import EvaluationModule
 from torch import nn
 from torch.nn import functional as F
 from transformers import (
@@ -60,7 +62,7 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         report_to=["wandb"],
     )
 
-    exact_match_metric = evaluate.load("exact_match")
+
     def compute_metrics(eval_pred):
         """Calculates metrics for evaluation.
         Here we take in the LOGITS and labels and compute the perplexity and other metrics.
@@ -92,8 +94,16 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         preds_str_list = tokenizer.batch_decode(preds, skip_special_tokens=True)
         labels_str_list = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
+        @lru_cache
+        def get_exact_match_metric() -> EvaluationModule:
+            return evaluate.load("exact_match")
+
+        exact_match_metric = get_exact_match_metric()
+
         try:
-            exact_match = exact_match_metric.compute(predictions = preds_str_list, references=labels_str_list)["exact_match"]
+            exact_match_dict = exact_match_metric.compute(predictions = preds_str_list, references=labels_str_list)
+            assert exact_match_dict is not None, "Unable to compute the exact_match"
+            exact_match = exact_match_dict["exact_match"]
         except:
             exact_match = None
         return {"perxplexity": perplexity, "exact_match": exact_match}
@@ -103,8 +113,8 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         args = training_args,
         tokenizer = tokenizer,
         # data_collator=data_collator,
-        train_dataset = train_dataset,
-        eval_dataset = eval_dataset,
+        train_dataset = train_dataset, # type: ignore
+        eval_dataset = eval_dataset, # type: ignore
         compute_metrics = compute_metrics,
         # preprocess_logits_for_metrics = None,
     )
@@ -121,7 +131,7 @@ def get_df(path: str ):
     return runs_df
 
 
-def train_model(trainer: Trainer, config: MoETConfig, model: nn.Module, runs_df: pd.DataFrame):
+def train_model(trainer: Trainer, config: MoETConfig, model: nn.Module, runs_df: pd.DataFrame, wandb):
     with wandb.init(project=config.model_name, name = f"{config.model_name}_{EXPERIMENT_NAME}", group = EXPERIMENT_GROUP) as run:
         try:
             trainer.train()
@@ -149,7 +159,7 @@ def train_model(trainer: Trainer, config: MoETConfig, model: nn.Module, runs_df:
         print("Saved to runs.csv")
 
 
-def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame):
+def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame, wandb):
 
     with wandb.init(project=config.model_name, name = f"{config.model_name}_{EXPERIMENT_NAME}", group = f"eval_{EXPERIMENT_GROUP}") as run:
         metrics = trainer.evaluate()
@@ -184,6 +194,7 @@ def main():
     # eval_dataset = TinyStoriesDataset(split="test", max_seq_len=config.block_size)
 
     dataset = load_dataset("roneneldan/TinyStories")
+    assert isinstance(dataset, DatasetDict)
     print(dataset["train"][0])
 
     processed_dataset = dataset.map(lambda x: tokenizer(x["text"],
@@ -204,14 +215,16 @@ def main():
 
     trainer = get_trainer(model = model, train_dataset = train_dataset, eval_dataset=eval_dataset, config = config, tokenizer = tokenizer, debug=False, )
 
+    wandb.login()
+
     if TRAIN:
-        train_model(trainer = trainer, config = config, model = model, runs_df = runs_df)
+        train_model(trainer = trainer, config = config, model = model, runs_df = runs_df, wandb = wandb)
 
     if EVALUATE:
-        evaluate_model(trainer = trainer, config = config, evals_df = evals_df)
+        evaluate_model(trainer = trainer, config = config, evals_df = evals_df, wandb = wandb)
 
     prompt = eval_dataset.select([100])
-    output = trainer.predict(prompt)
+    output = trainer.predict(prompt) # type: ignore
     print("Prompt: ", prompt)
     print("Output: ", output)
 

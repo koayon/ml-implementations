@@ -6,8 +6,12 @@ from torch import nn
 from alibi.attention import AlibiUnidirectionalAttention
 from general.basic_ffn import FFN
 from general.norms import RMSNorm
-from mixture_of_experts.cache import MoELayerCache
-from moet_experiment.group_moe_layer import GroupExpertChoiceMoELayer
+from mixture_of_experts.cache import (
+    ExpertChoiceFullCache,
+    ExpertChoiceLayerCache,
+    TokenChoiceLayerCache,
+)
+from moet_experiment.group_moe_layer import GroupMoELayer
 from moet_experiment.moet_config import MoETConfig
 
 device = "cuda" if t.cuda.is_available() else "cpu"
@@ -46,7 +50,7 @@ class MoETBlock(nn.Module):
         else:
             self.norm2 = nn.LayerNorm(config.hidden_size)
 
-        self.expert_layer = GroupExpertChoiceMoELayer(
+        self.expert_layer = GroupMoELayer(
             num_experts=num_experts,
             config=config,
             layer_id=layer_id,
@@ -63,7 +67,7 @@ class MoETBlock(nn.Module):
 
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
-    ) -> Tuple[t.Tensor, MoELayerCache]:
+    ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
         """
         x: batch seq hidden_size
 

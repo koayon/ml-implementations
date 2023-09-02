@@ -10,8 +10,9 @@ from torch.nn import functional as F
 from general.swiglu_ffn import SwiGLUFFN
 from helpers import einsum
 from mixture_of_experts.cache import (
+    ExpertChoiceFullCache,
     ExpertChoiceLayerCache,
-    MoELayerCache,
+    TokenChoiceFullCache,
     TokenChoiceLayerCache,
 )
 from mixture_of_experts.routers import HashRouter
@@ -81,7 +82,7 @@ class Router(nn.Module):
                 return clean_h # bs num_experts
 
 
-class GroupExpertChoiceMoELayer(nn.Module):
+class GroupMoELayer(nn.Module):
     experts: nn.ModuleList
     up_experts: list[nn.Module]
     down_experts: list[nn.Module]
@@ -297,7 +298,7 @@ class GroupExpertChoiceMoELayer(nn.Module):
 
 
 def main():
-    expert_layer = GroupExpertChoiceMoELayer(
+    expert_layer = GroupMoELayer(
         k=2,
         layer_id="expert-layer-1",
         num_experts=4,

@@ -1,5 +1,5 @@
 import collections
-from typing import Optional, OrderedDict, Tuple
+from typing import Optional, OrderedDict, Tuple, Union
 
 import tiktoken
 import torch as t
@@ -13,7 +13,7 @@ from alibi.transformer_block import ALiBiTransformerBlock
 from general.norms import RMSNorm
 from helpers import einsum, get_param_count_dict, tiny_stories_true_parameter_count
 from hooks import remove_hooks
-from mixture_of_experts.cache import ExpertChoiceFullCache
+from mixture_of_experts.cache import ExpertChoiceFullCache, TokenChoiceFullCache
 from moet_experiment.alibi_confi_block import ALiBiConfiTBlock
 from moet_experiment.moe_blocks import MoETBlock
 from moet_experiment.moet_config import MoETConfig
@@ -108,7 +108,9 @@ class MoET(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None, **kwargs) -> Tuple[t.Tensor, ExpertChoiceFullCache]:
+    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None,
+                # moe_cache: Optional[Union[ExpertChoiceFullCache, TokenChoiceFullCache]] = None,
+                **kwargs) -> Tuple[t.Tensor, Union[ExpertChoiceFullCache, TokenChoiceFullCache]]:
         """
         x: batch seq_length
         """

@@ -1,9 +1,9 @@
 import pytest
 import torch as t
 
-from moet_experiment.group_moe_layer import GroupExpertChoiceMoELayer
-from moet_experiment.moet_config import MoETConfig
 from general import device
+from moet_experiment.group_moe_layer import GroupMoELayer
+from moet_experiment.moet_config import MoETConfig
 
 config = MoETConfig()
 # config.hidden_size = 8
@@ -24,7 +24,7 @@ def test_group_moe_layer(
     c: float,
     config: MoETConfig = MoETConfig(),
 ):
-    moe_layer = GroupExpertChoiceMoELayer(
+    moe_layer = GroupMoELayer(
         num_experts=num_experts,
         router_str=router_str,
         layer_id="layer1",
@@ -55,7 +55,7 @@ def test_group_moe_layer(
 
 
 def test_group_moe_layer_exceptions(num_experts = 8):
-    moe_layer = GroupExpertChoiceMoELayer(
+    moe_layer = GroupMoELayer(
         num_experts=num_experts,
         router_str="hash",
         layer_id="layer1",
@@ -70,7 +70,7 @@ def test_group_moe_layer_exceptions(num_experts = 8):
 
     # Test k and c are both 0
     with pytest.raises(AssertionError):
-        moe_layer = GroupExpertChoiceMoELayer(
+        moe_layer = GroupMoELayer(
             num_experts=num_experts,
             router_str="hash",
             layer_id="layer1",
@@ -79,7 +79,7 @@ def test_group_moe_layer_exceptions(num_experts = 8):
 
     # Test invalid router
     with pytest.raises(AssertionError):
-        moe_layer = GroupExpertChoiceMoELayer(
+        moe_layer = GroupMoELayer(
             num_experts=4,
             router_str="invalid",
             layer_id="layer1",
