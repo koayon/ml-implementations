@@ -1,7 +1,9 @@
+import re
 from dataclasses import dataclass
 from typing import Dict
 
 import torch as t
+from einops import rearrange
 from jaxtyping import Float, Int
 from typeguard import typechecked
 
@@ -43,6 +45,8 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         token_assignments is the top k expert ids
 
         routing_weights is the raw outputs of the routing model (before softmax)
+
+        As this is expert choice, we index dimensions by experts first (layer, expert)
         """
         super().__init__(moe_cache_dict)
 
@@ -57,19 +61,33 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         return super().__getitem__(__key)
 
     @property
-    def G(self) -> Float[t.Tensor, "layer k num_experts"]:
-        return t.stack([cache.G for idx, cache in self.items()], dim=0)
+    def G(self) -> Float[t.Tensor, "layer num_experts k"]:
+        """G is the softmaxed routing weights for the top k experts
 
-    def P(self) -> Int[t.Tensor, "layer bs k num_experts"]:
-        return t.stack([cache.P for idx, cache in self.items()], dim=0)
+        Returns
+        -------
+        t.Tensor [layer num_experts k]
+        """
+        out = t.stack([cache.G for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer k num_experts -> layer num_experts k")
+        return out
 
     @property
-    def token_assignments(self) -> Int[t.Tensor, "layer k num_experts"]:
-        return t.stack([cache.token_assignments for idx, cache in self.items()], dim=0)
+    def token_assignments(self) -> Int[t.Tensor, "layer num_experts k"]:
+        out = t.stack([cache.token_assignments for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer k num_experts -> layer num_experts k")
+        return out
+
+    def P(self) -> Int[t.Tensor, "layer num_experts bs k"]:
+        out = t.stack([cache.P for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer bs k num_experts -> layer num_experts bs k")
+        return out
 
     @property
-    def routing_weights_tensor(self) -> Float[t.Tensor, "layer batch*seq num_experts"]:
-        return t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
+    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch*seq"]:
+        out = t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer batch*seq num_experts -> layer num_experts batch*seq")
+        return out
 
     @property
     def layer_indices(self) -> list[str]:
@@ -78,6 +96,11 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
     @property
     def num_experts(self) -> int:
         return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
+
+    @property
+    def num_tokens(self) -> int:
+        return self.routing_weights_tensor.shape[-1] # batch*seq
+
 
     def _pad_with_negative1s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
@@ -103,6 +126,8 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         token_assignments is the top k expert ids
 
         routing_weights is the raw outputs of the routing model (before softmax)
+
+        As this is token choice, we index dimensions by tokens first (apart from in P and routing_weights which are consistent with Expert Choice in layer, expert first)
         """
         super().__init__(moe_cache_dict)
 
@@ -115,19 +140,27 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         return super().__getitem__(__key)
 
     @property
-    def G(self) -> Float[t.Tensor, "layer batch_seq k"]:
-        return t.stack([cache.G for idx, cache in self.items()], dim=0)
-
-    def P(self) -> Int[t.Tensor, "layer bs k num_experts"]:
-        return t.stack([cache.P for idx, cache in self.items()], dim=0)
-
-    @property
-    def expert_assignments(self) -> Int[t.Tensor, "layer batch_seq k"]:
-        return t.stack([cache.expert_assignments for idx, cache in self.items()], dim=0)
+    def G(self) -> Float[t.Tensor, "batch_seq layer k"]:
+        out = t.stack([cache.G for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer batch_seq k -> batch_seq layer k")
+        return out
 
     @property
-    def routing_weights_tensor(self) -> Float[t.Tensor, "layer batch*seq num_experts"]:
-        return t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
+    def expert_assignments(self) -> Int[t.Tensor, "batch_seq layer k"]:
+        out = t.stack([cache.expert_assignments for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer batch_seq k -> batch_seq layer k")
+        return out
+
+    def P(self) -> Int[t.Tensor, "layer num_experts bs k"]:
+        out = t.stack([cache.P for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer bs k num_experts -> layer num_experts bs k")
+        return out
+
+    @property
+    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch*seq"]:
+        out = t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
+        out = rearrange(out, "layer batch*seq num_experts -> layer num_experts batch*seq")
+        return out
 
     @property
     def layer_indices(self) -> list[str]:
@@ -136,6 +169,10 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
     @property
     def num_experts(self) -> int:
         return max([layer_cache.routing_weights.shape[-1] for idx, layer_cache in self.items()])
+
+    @property
+    def num_tokens(self) -> int:
+        return self.routing_weights_tensor.shape[-1] # batch*seq
 
     def _pad_with_negative1s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
