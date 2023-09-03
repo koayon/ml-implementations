@@ -56,6 +56,30 @@ def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
 
     return lb_loss.item()
 
+def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
+    """Router z loss.
+
+    Reference: ST-MoE: Designing Stable and Transferable Sparse Expert Models, https://arxiv.org/pdf/2202.08906.pdf
+
+    Note that we've chosen not to multiply divide through the num_experts here.
+
+    Parameters
+    ----------
+    moe_cache : MoEFullCache
+        MoE cache containing G, assignments and routing logits
+
+    Returns
+    -------
+    float
+        Router z loss
+    """
+    router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch*seq]
+    lse_logits = t.logsumexp(router_logits, dim=-1)  # [layer, num_experts]
+    squared_lse_logits = lse_logits ** 2
+    z_loss = einsum(squared_lse_logits, "layer num_experts ->") / (moe_cache.num_tokens)
+
+    return z_loss.item()
+
 
 class MoET_hf(PreTrainedModel):
     def __init__(self, hf_config: MoETHFConfig):
@@ -85,7 +109,7 @@ class MoET_hf(PreTrainedModel):
             Output dict
         """
         # Forward pass
-        logits, _moe_cache = self.model(input_ids, attention_mask)
+        logits, moe_cache = self.model(input_ids, attention_mask)
 
         if return_loss:
             labels = input_ids[:, 1:]
@@ -96,9 +120,9 @@ class MoET_hf(PreTrainedModel):
 
             cross_entropy_loss = F.cross_entropy(flattened_logits, flattened_labels)
 
-            load_balancing_aux_loss = 0
+            load_balancing_aux_loss = load_balancing_aux_loss_function(moe_cache)
 
-            router_z_loss = 0
+            router_z_loss = router_z_loss_function(moe_cache)
 
             loss = cross_entropy_loss + self.lb_coef * load_balancing_aux_loss + self.z_coef * router_z_loss
 

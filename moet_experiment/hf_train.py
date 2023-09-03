@@ -37,6 +37,8 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         learning_rate=config.learning_rate,
         weight_decay = config.weight_decay,
 
+        # max_grad_norm = 1.0,
+
         # Optimizations
         # gradient_checkpointing = True
         # deepspeed = "deepspeed_config.json"

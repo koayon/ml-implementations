@@ -214,6 +214,7 @@ class GroupMoELayer(nn.Module):
 
             layer_cache = ExpertChoiceLayerCache(
                     G=G,
+                    P = P,
                     token_assignments=chosen_token_index,
                     routing_weights=h,
                 )
@@ -223,6 +224,7 @@ class GroupMoELayer(nn.Module):
 
             layer_cache = TokenChoiceLayerCache(
                 G=G,
+                P=P,
                 expert_assignments=chosen_expert_index,
                 routing_weights=h,
             )
