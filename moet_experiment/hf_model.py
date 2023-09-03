@@ -2,12 +2,13 @@ from json import load
 from typing import Optional
 
 import torch as t
-from einops import rearrange
+from einops import einsum, rearrange, reduce
 from torch import nn
 from torch.nn import functional as F
 from transformers import PretrainedConfig, PreTrainedModel
 
 from general import device
+from mixture_of_experts.cache import TokenChoiceFullCache
 from moet_experiment.model import MoET
 
 
@@ -23,6 +24,38 @@ class MoETHFConfig(PretrainedConfig):
         self.block_type = block_type
         self.layers = layers
         super().__init__(**kwargs)
+
+def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
+    """Load balancing auxiliary loss.
+
+    Reference: Shazeer et al (2017) and ST-MoE: Designing Stable and Transferable Sparse Expert Models, https://arxiv.org/pdf/2202.08906.pdf
+
+    Parameters
+    ----------
+    moe_cache : MoEFullCache
+        MoE cache containing G, assignments and routing logits
+
+    Returns
+    -------
+    float
+        Load balancing auxiliary loss
+    """
+    num_experts = moe_cache.num_experts
+    num_tokens = moe_cache.num_tokens
+
+    total_tokens_per_expert = reduce(moe_cache.P, "layer expert batch_seq k -> layer expert", "sum")  # [layer, expert]
+    frac_tokens_per_expert = total_tokens_per_expert / num_tokens
+
+    routing_probs = F.softmax(moe_cache.routing_weights_tensor, dim=-1)  # [layer, num_experts, batch_seq]
+
+    total_router_prob_per_expert = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
+    frac_router_prob_per_expert = total_router_prob_per_expert / num_tokens
+
+    # Dot product
+    lb_loss = num_experts * einsum(frac_tokens_per_expert, frac_router_prob_per_expert, "layer expert, layer expert ->")
+
+    return lb_loss.item()
+
 
 class MoET_hf(PreTrainedModel):
     def __init__(self, hf_config: MoETHFConfig):
