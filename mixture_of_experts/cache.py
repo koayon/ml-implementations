@@ -15,6 +15,7 @@ class ExpertChoiceLayerCache():
     """
 
     G: Float[t.Tensor, "k num_experts"]
+    P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
     token_assignments: Int[t.Tensor, "k num_experts"] # token assignments here
     routing_weights: Float[t.Tensor, "batch*seq num_experts"]
 
@@ -26,6 +27,7 @@ class TokenChoiceLayerCache():
     """
 
     G: Float[t.Tensor, "batch*seq k"]
+    P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
     expert_assignments: Int[t.Tensor, "batch*seq k"] # expert assignments here
     routing_weights: Float[t.Tensor, "batch*seq num_experts"]
 
@@ -57,6 +59,9 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
     @property
     def G(self) -> Float[t.Tensor, "layer k num_experts"]:
         return t.stack([cache.G for idx, cache in self.items()], dim=0)
+
+    def P(self) -> Int[t.Tensor, "layer bs k num_experts"]:
+        return t.stack([cache.P for idx, cache in self.items()], dim=0)
 
     @property
     def token_assignments(self) -> Int[t.Tensor, "layer k num_experts"]:
@@ -112,6 +117,9 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
     @property
     def G(self) -> Float[t.Tensor, "layer batch_seq k"]:
         return t.stack([cache.G for idx, cache in self.items()], dim=0)
+
+    def P(self) -> Int[t.Tensor, "layer bs k num_experts"]:
+        return t.stack([cache.P for idx, cache in self.items()], dim=0)
 
     @property
     def expert_assignments(self) -> Int[t.Tensor, "layer batch_seq k"]:
