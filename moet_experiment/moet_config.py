@@ -45,6 +45,10 @@ class MoETConfig:
 
     learning_rate: float = 0.001
     weight_decay: float = 0.01
+
+    lb_coef: float = 1.0 # to tune. Load balancing coefficient
+    z_coef: float = 0.001 # Router z coefficient
+
     warmup_steps: int = 100
 
     batch_size: int = 32
