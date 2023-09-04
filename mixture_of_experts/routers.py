@@ -27,7 +27,8 @@ class HashRouter(nn.Module):
         self.vocab_size = config.vocab_size
         self.k = k
 
-        self.generator = t.Generator(device = device)
+        # self.generator = t.Generator(device = device)
+        self.generator = t.Generator()
 
         self.hash = self.build_random_hash()
         self.hash.to(device)
@@ -58,7 +59,8 @@ class HashRouter(nn.Module):
         self.generator.manual_seed(seed)
 
         hash = t.randint(
-            high=self.num_experts, size=(self.vocab_size, self.k), generator=self.generator, device = device
+            high=self.num_experts, size=(self.vocab_size, self.k), generator=self.generator
+            # , device = device
         )
         return hash
 

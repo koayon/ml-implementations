@@ -12,19 +12,6 @@ from mixture_of_experts.cache import TokenChoiceFullCache
 from moet_experiment.model import MoET
 
 
-class MoETHFConfig(PretrainedConfig):
-
-    def __init__(
-        self,
-        block_type="MoE",
-        layers: int = 8,
-        **kwargs,
-    ):
-
-        self.block_type = block_type
-        self.layers = layers
-        super().__init__(**kwargs)
-
 def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
     """Load balancing auxiliary loss.
 
@@ -73,16 +60,29 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
     float
         Router z loss
     """
-    router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch*seq]
+    router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch_seq]
     lse_logits = t.logsumexp(router_logits, dim=-1)  # [layer, num_experts]
     squared_lse_logits = lse_logits ** 2
     z_loss = einsum(squared_lse_logits, "layer num_experts ->") / (moe_cache.num_tokens)
 
     return z_loss.item()
 
+class MoETHFConfig(PretrainedConfig):
+
+    def __init__(
+        self,
+        block_type="MoE",
+        layers: int = 8,
+        **kwargs,
+    ):
+
+        self.block_type = block_type
+        self.layers = layers
+        super().__init__(**kwargs)
+
 
 class MoET_hf(PreTrainedModel):
-    def __init__(self, hf_config: MoETHFConfig):
+    def __init__(self, hf_config: MoETHFConfig = MoETHFConfig()):
         super().__init__(hf_config)
         self.hf_config = hf_config
 
@@ -121,7 +121,6 @@ class MoET_hf(PreTrainedModel):
             cross_entropy_loss = F.cross_entropy(flattened_logits, flattened_labels)
 
             load_balancing_aux_loss = load_balancing_aux_loss_function(moe_cache)
-
             router_z_loss = router_z_loss_function(moe_cache)
 
             loss = cross_entropy_loss + self.lb_coef * load_balancing_aux_loss + self.z_coef * router_z_loss

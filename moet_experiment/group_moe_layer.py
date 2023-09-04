@@ -67,11 +67,10 @@ class Router(nn.Module):
             assert input_tokens is not None
 
             input_tokens = rearrange(input_tokens, "b s -> (b s)")
-            clean_h = self.hash_router(input_tokens)  # bs num_experts
+            clean_h = self.hash_router(input_tokens).float()  # bs num_experts
         else:
             clean_h = self.linear(x)  # bs num_experts
-
-        clean_h = self.routing_dropout(clean_h)  # bs num_experts
+            clean_h = self.routing_dropout(clean_h)  # bs num_experts
 
         # Add gumbel noise to the routing logits to encourage exploration during training
         # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()

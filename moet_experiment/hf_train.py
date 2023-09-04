@@ -10,6 +10,7 @@ from einops import rearrange
 from evaluate import EvaluationModule
 from torch import nn
 from torch.nn import functional as F
+from torch.optim import adamw
 from transformers import (
     AutoTokenizer,
     PreTrainedTokenizerBase,
@@ -18,15 +19,14 @@ from transformers import (
 )
 
 import wandb
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
-from moet_experiment.hf_model import MoET_hf, MoETHFConfig
-from moet_experiment.model import MoET
+from moet_experiment.hf_model import MoET_hf
 from moet_experiment.moet_config import MoETConfig
 
 EXPERIMENT_NAME = "test"
 EXPERIMENT_GROUP = "test"
 TRAIN = True
 EVALUATE = True
+DEBUG = True
 
 
 def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool=False, tokenizer: PreTrainedTokenizerBase):
@@ -45,13 +45,13 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
 
         # PyTorch 2.0 settings
         bf16=True if t.cuda.is_available() else False, # bfloat16 training
-        torch_compile=True, # optimizations
-        optim="adamw_torch_fused", # improved optimizer
+        torch_compile=True if t.cuda.is_available() else False, # optimizations
+        optim="adamw_torch_fused" if t.cuda.is_available() else "adamw_hf", # improved optimizer
         # eval_accumulation_steps=32,
 
         # Save, log, eval
         # num_train_epochs=config.num_epochs,
-        max_steps = 100 if debug else config.max_steps,
+        max_steps = 5 if debug else config.max_steps,
         warmup_steps = config.warmup_steps,
         logging_strategy = "steps",
         logging_steps=config.logging_steps,
@@ -184,8 +184,7 @@ def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame,
 def main():
     config = MoETConfig()
 
-    hf_config = MoETHFConfig()
-    model = MoET_hf(hf_config=hf_config) # hf wrapped model
+    model = MoET_hf() # hf wrapped model
 
 
     tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
@@ -215,7 +214,7 @@ def main():
     runs_df = get_df("runs.csv")
     evals_df = get_df("evals.csv")
 
-    trainer = get_trainer(model = model, train_dataset = train_dataset, eval_dataset=eval_dataset, config = config, tokenizer = tokenizer, debug=False, )
+    trainer = get_trainer(model = model, train_dataset = train_dataset, eval_dataset=eval_dataset, config = config, tokenizer = tokenizer, debug=DEBUG, )
 
     wandb.login()
 

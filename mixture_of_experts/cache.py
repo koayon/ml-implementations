@@ -20,7 +20,7 @@ class ExpertChoiceLayerCache():
     token_assignments: Int[t.Tensor, "k num_experts"] # token assignments here
 
     P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
-    routing_weights: Float[t.Tensor, "batch*seq num_experts"]
+    routing_weights: Float[t.Tensor, "batch_seq num_experts"]
 
 @dataclass
 class TokenChoiceLayerCache():
@@ -29,11 +29,11 @@ class TokenChoiceLayerCache():
     routing_weights: raw outputs of the routing model (before softmax)
     """
 
-    G: Float[t.Tensor, "batch*seq k"]
-    expert_assignments: Int[t.Tensor, "batch*seq k"] # expert assignments here
+    G: Float[t.Tensor, "batch_seq k"]
+    expert_assignments: Int[t.Tensor, "batch_seq k"] # expert assignments here
 
     P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
-    routing_weights: Float[t.Tensor, "batch*seq num_experts"]
+    routing_weights: Float[t.Tensor, "batch_seq num_experts"]
 
 
 
@@ -95,9 +95,9 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         return out
 
     @property
-    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch*seq"]:
+    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch_seq"]:
         out = t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
-        out = rearrange(out, "layer batch*seq num_experts -> layer num_experts batch*seq")
+        out = rearrange(out, "layer batch_seq num_experts -> layer num_experts batch_seq")
         return out
 
     @property
@@ -110,7 +110,7 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
 
     @property
     def num_tokens(self) -> int:
-        return self.routing_weights_tensor.shape[-1] # batch*seq
+        return self.routing_weights_tensor.shape[-1] # batch_seq
 
 
     def _pad_with_negative1s(self) -> None:
@@ -131,7 +131,7 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
                 cache.token_assignments = repeat(cache.token_assignments, "k num_experts -> k (2 num_experts)")
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
-                cache.routing_weights = repeat(cache.routing_weights, "batch*seq num_experts -> batch*seq (2 num_experts)")
+                cache.routing_weights = repeat(cache.routing_weights, "batch_seq num_experts -> batch_seq (2 num_experts)")
 
 class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
     def __init__(self, moe_cache_dict: Dict[str, TokenChoiceLayerCache]):
@@ -181,9 +181,9 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         return out
 
     @property
-    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch*seq"]:
+    def routing_weights_tensor(self) -> Float[t.Tensor, "layer num_experts batch_seq"]:
         out = t.stack([cache.routing_weights for idx, cache in self.items()], dim=0)
-        out = rearrange(out, "layer batch*seq num_experts -> layer num_experts batch*seq")
+        out = rearrange(out, "layer batch_seq num_experts -> layer num_experts batch_seq")
         return out
 
     @property
@@ -196,7 +196,7 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
 
     @property
     def num_tokens(self) -> int:
-        return self.routing_weights_tensor.shape[-1] # batch*seq
+        return self.routing_weights_tensor.shape[-1] # batch_seq
 
     def _pad_with_negative1s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
@@ -211,4 +211,4 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         for _, cache in self.items():
             if cache.routing_weights.shape[1] < self.num_experts:
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
-                cache.routing_weights = repeat(cache.routing_weights, "batch*seq num_experts -> batch*seq (2 num_experts)")
+                cache.routing_weights = repeat(cache.routing_weights, "batch_seq num_experts -> batch_seq (2 num_experts)")
