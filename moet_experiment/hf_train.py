@@ -12,8 +12,11 @@ from torch import nn
 from torch.nn import functional as F
 from torch.optim import adamw
 from transformers import (
+    AutoModelForCausalLM,
     AutoTokenizer,
+    PreTrainedModel,
     PreTrainedTokenizerBase,
+    TextDataset,
     Trainer,
     TrainingArguments,
 )
@@ -28,14 +31,15 @@ TRAIN = True
 EVALUATE = True
 DEBUG = True
 
-
-def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool=False, tokenizer: PreTrainedTokenizerBase):
-    training_args = TrainingArguments(
+def get_training_args(*, config: MoETConfig, debug: bool=False, deepspeed_config = None):
+    return TrainingArguments(
         output_dir="checkpoints",
         per_device_train_batch_size=config.batch_size,
         per_device_eval_batch_size=config.batch_size,
         learning_rate=config.learning_rate,
         weight_decay = config.weight_decay,
+
+        deepspeed = deepspeed_config, # type: ignore
 
         # max_grad_norm = 1.0,
 
@@ -44,7 +48,7 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         # deepspeed = "deepspeed_config.json"
 
         # PyTorch 2.0 settings
-        bf16=True if t.cuda.is_available() else False, # bfloat16 training
+        # bf16=True if t.cuda.is_available() else False, # bfloat16 training
         torch_compile=True if t.cuda.is_available() else False, # optimizations
         optim="adamw_torch_fused" if t.cuda.is_available() else "adamw_hf", # improved optimizer
         # eval_accumulation_steps=32,
@@ -63,6 +67,59 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         load_best_model_at_end = True,
         report_to=["wandb"],
     )
+
+def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool=False, tokenizer: PreTrainedTokenizerBase):
+
+    deepspeed_config = {
+        # "fp16": {
+        #     "enabled": "auto",
+        #     "loss_scale": 0,
+        #     "loss_scale_window": 1000,
+        #     "initial_scale_power": 16,
+        #     "hysteresis": 2,
+        #     "min_loss_scale": 1
+        # },
+
+        "optimizer": {
+            "type": "AdamW",
+            "params": {
+                "lr": "auto",
+                "betas": "auto",
+                "eps": "auto",
+                "weight_decay": "auto"
+            }
+        },
+
+        "scheduler": {
+            "type": "WarmupLR",
+            "params": {
+                "warmup_min_lr": "auto",
+                "warmup_max_lr": "auto",
+                "warmup_num_steps": "auto"
+            }
+        },
+
+        "zero_optimization": {
+            "stage": 2,
+            "offload_optimizer": {
+                "device": "cpu",
+                "pin_memory": True
+            },
+            "allgather_partitions": True,
+            "allgather_bucket_size": 2e8,
+            "overlap_comm": True,
+            "reduce_scatter": True,
+            "reduce_bucket_size": 2e8,
+            "contiguous_gradients": True
+        },
+
+        "gradient_accumulation_steps": "auto",
+        "gradient_clipping": "auto",
+        "train_batch_size": "auto",
+        "train_micro_batch_size_per_gpu": "auto",
+    }
+
+    training_args = get_training_args(config=config, debug=debug, deepspeed_config = deepspeed_config)
 
 
     def compute_metrics(eval_pred):
@@ -121,7 +178,6 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         # preprocess_logits_for_metrics = None,
     )
     return trainer
-
 
 def get_df(path: str ):
     if os.path.exists(path):
