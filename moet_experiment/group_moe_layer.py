@@ -108,7 +108,7 @@ class GroupMoELayer(nn.Module):
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
-        self.use_expert_choice = use_expert_choice
+        self.use_expert_choice = config.use_expert_choice
 
         self.layer_id = layer_id
 
@@ -169,6 +169,8 @@ class GroupMoELayer(nn.Module):
         else:
             self.k = k
 
+        # print(layer_id, "- k: ", self.k)
+
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
     ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
@@ -197,9 +199,6 @@ class GroupMoELayer(nn.Module):
         """
 
         batch_size, seq_len, _hidden_size = x.shape
-
-        # If there aren't enough tokens in the input to select top k, reduce k
-        self.k = min(int(self.k), (batch_size * seq_len))
 
         x = rearrange(x, "b s h -> (b s) h")
 
@@ -261,6 +260,9 @@ class GroupMoELayer(nn.Module):
             G, chosen_token_index, P
         """
 
+        # If there aren't enough tokens in the input to select top k, reduce k
+        self.k = min(int(self.k), (batch_size * seq_len))
+
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         # Select top-k expert, with one-hot vector. P is the permutation matrix
@@ -295,6 +297,9 @@ class GroupMoELayer(nn.Module):
             G, chosen_expert_index, P
         """
 
+        # If there aren't enough tokens in the input to select top k, reduce k
+        self.k = min(int(self.k), (self.num_experts))
+
         G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
 
         # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
@@ -306,7 +311,7 @@ class GroupMoELayer(nn.Module):
 
         # We want to rearrange P. Currently we have a long line of bs such that we see all of the first batch before we see any of the second batch. We would like to see the first elements from all batches then second elements etc.
         # This means there's less variance in performance depending on where you happen to be within a batch
-        P = rearrange(P, "(b s) k num_experts -> (s b k num_experts", b = batch_size)  # sb k num_experts
+        P = rearrange(P, "(b s) k num_experts -> (s b) k num_experts", b = batch_size)  # sb k num_experts
 
         drop_points = self._get_first_drop_point(P = P, k = self.k)
 
@@ -321,7 +326,7 @@ class GroupMoELayer(nn.Module):
 
         return G, chosen_expert_index, P
 
-    def _get_first_drop_point(self, P: t.Tensor, k: int) -> t.Tensor:
+    def _get_first_drop_point(self, P: t.Tensor, k: int) -> Int[t.Tensor, "num_experts"]:
         """_summary_
 
         Parameters
@@ -356,7 +361,7 @@ class GroupMoELayer(nn.Module):
             if drop_points[expert_num] == -1:
                 drop_points[expert_num] = token_num
 
-        return drop_points
+        return drop_points # num_experts
 
 
 def main():
