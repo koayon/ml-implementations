@@ -179,6 +179,45 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
     )
     return trainer
 
+def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path: str, small_train_dataset: TextDataset, small_eval_dataset: TextDataset):
+    def wandb_hp_space(trial):
+     return {
+       "method": "random",
+         "metric": {"name": "loss", # "objective"
+                    "goal": "minimize"},
+         "parameters": {
+             "learning_rate": {"distribution": "uniform", "min": 1e-6, "max": 1e-4},
+             "per_device_train_batch_size": {"values": [16, 32, 64, 128]},
+         },
+     }
+
+    def model_init() -> PreTrainedModel:
+        return AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+        )
+
+    training_args = get_training_args(config=config, debug=False, deepspeed_config = None)
+
+    trainer = Trainer(
+        # model=None,
+        args=training_args,
+        train_dataset=small_train_dataset,
+        eval_dataset=small_eval_dataset,
+        # compute_metrics=compute_metrics,
+        model_init=model_init,
+        # data_collator=data_collator,
+    )
+
+    best_trial = trainer.hyperparameter_search(
+        direction="minimize",
+        backend="wandb",
+        hp_space=wandb_hp_space,
+        n_trials=num_trials,
+        # compute_objective=compute_objective,
+    )
+
+    return best_trial
+
 def get_df(path: str ):
     if os.path.exists(path):
         runs_df = pd.read_csv(path)
