@@ -66,6 +66,7 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         # Make sure the cache has consistent shapes even when the number of experts per layer varies
         # self._pad_with_negative1s()
         self._pad_with_duplicates()
+        self._pad_k_dim()
 
     def __getitem__(self, __key: str) -> ExpertChoiceLayerCache:
         return super().__getitem__(__key)
@@ -109,6 +110,10 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
 
     @property
+    def k(self) -> int:
+        return max([layer_cache.G.shape[0] for idx, layer_cache in self.items()])
+
+    @property
     def num_tokens(self) -> int:
         return self.routing_weights_tensor.shape[-1] # batch_seq
 
@@ -132,6 +137,15 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
                 cache.routing_weights = repeat(cache.routing_weights, "batch_seq num_experts -> batch_seq (2 num_experts)")
+
+    def _pad_k_dim(self) -> None:
+        for _, cache in self.items():
+            if cache.G.shape[0] < self.k:
+                cache.G = repeat(cache.G, "k num_experts -> (2 k) num_experts")
+                cache.token_assignments = repeat(cache.token_assignments, "k num_experts -> (2 k) num_experts")
+
+                cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")
+
 
 class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
     def __init__(self, moe_cache_dict: Dict[str, TokenChoiceLayerCache]):
@@ -158,6 +172,7 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
          # Make sure the cache has consistent shapes even when the number of experts per layer varies
         # self._pad_with_negative1s()
         self._pad_with_duplicates()
+        self._pad_k_dim()
 
     def __getitem__(self, __key: str) -> TokenChoiceLayerCache:
         return super().__getitem__(__key)
@@ -191,6 +206,10 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         return list(self.keys())
 
     @property
+    def k(self) -> int:
+        return max([layer_cache.G.shape[0] for idx, layer_cache in self.items()])
+
+    @property
     def num_experts(self) -> int:
         return max([layer_cache.routing_weights.shape[-1] for idx, layer_cache in self.items()])
 
@@ -212,3 +231,11 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
             if cache.routing_weights.shape[1] < self.num_experts:
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
                 cache.routing_weights = repeat(cache.routing_weights, "batch_seq num_experts -> batch_seq (2 num_experts)")
+
+    def _pad_k_dim(self) -> None:
+        for _, cache in self.items():
+            if cache.G.shape[0] < self.k:
+                cache.G = repeat(cache.G, "bs k -> bs (2 k)")
+                cache.expert_assignments = repeat(cache.expert_assignments, "bs k -> bs (2 k)")
+
+                cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")

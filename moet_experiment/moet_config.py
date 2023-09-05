@@ -39,6 +39,8 @@ class MoETConfig:
     train_capacity_factor: float = 1.25
     eval_capacity_factor: float = 2.0
 
+    use_expert_choice: bool = False
+
     # Training parameters
     max_steps: int = 4000 # 2M in TinyStories
     num_epochs: int = 1
