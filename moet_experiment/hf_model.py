@@ -98,6 +98,34 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     return expert_importance_loss.item()
 
+def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
+    """Expert load balancing loss introduced in the LIMOE paper. Used in combination with the global entropy loss.
+
+    This pushes each tokens towards choosing a single expert more strongly rather than being indifferent between experts.
+
+    Reference: https://arxiv.org/pdf/2206.02770.pdf
+
+    Parameters
+    ----------
+    moe_cache : TokenChoiceFullCache
+        _description_
+
+    Returns
+    -------
+    float
+        _description_
+    """
+    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+
+    # Calculate the entropy, denoted h in the paper
+    local_entropy = - t.sum(flat_routing_probs * t.log(flat_routing_probs), dim=0)  # [batch_seq]
+
+    local_entropy_loss = t.mean(local_entropy)
+
+    return local_entropy_loss.item()
+
 
 class MoETHFConfig(PretrainedConfig):
 

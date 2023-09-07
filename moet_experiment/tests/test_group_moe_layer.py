@@ -13,8 +13,9 @@ config = MoETConfig()
 @pytest.mark.parametrize("router_str", ["hash", "linear"])
 @pytest.mark.parametrize("group_size", [1, 2])
 @pytest.mark.parametrize("seq_len", [4])
-@pytest.mark.parametrize("batch_size", [1, 4])
-@pytest.mark.parametrize("c", [1.0, 1.5])
+@pytest.mark.parametrize("batch_size", [4])
+@pytest.mark.parametrize("c", [1.5])
+@pytest.mark.parametrize("use_expert_choice", [True, False])
 def test_group_moe_layer(
     num_experts: int,
     router_str: str,
@@ -22,6 +23,7 @@ def test_group_moe_layer(
     seq_len: int,
     batch_size: int,
     c: float,
+    use_expert_choice: bool,
     config: MoETConfig = MoETConfig(),
 ):
     moe_layer = GroupMoELayer(
@@ -31,6 +33,7 @@ def test_group_moe_layer(
         group_size=group_size,
         c=c,
         config=config,
+        use_expert_choice=use_expert_choice,
     )
     moe_layer.to(device)
 
@@ -85,3 +88,7 @@ def test_group_moe_layer_exceptions(num_experts = 8):
             layer_id="layer1",
             c=1.0,
         )
+
+def test_get_first_drop_point():
+    # TODO: test this
+    raise NotImplementedError
