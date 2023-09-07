@@ -23,7 +23,6 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-from transformers.data import data_collator
 
 import wandb
 from moet_experiment.hf_model import MoET_hf
@@ -31,9 +30,9 @@ from moet_experiment.moet_config import MoETConfig
 
 EXPERIMENT_NAME = "test"
 EXPERIMENT_GROUP = "test"
-TRAIN = False
+TRAIN = True
 EVALUATE = True
-DEBUG = True
+DEBUG = False
 
 def get_training_args(*, config: MoETConfig, debug: bool=False, deepspeed_config = None):
     return TrainingArguments(
