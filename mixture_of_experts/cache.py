@@ -12,27 +12,39 @@ from typeguard import typechecked
 @dataclass
 class ExpertChoiceLayerCache():
     """G: softmaxed routing weights for the top k experts
+        [k num_experts]
     token_assignments: the top k expert ids
+        [k num_experts]
+
+    P: one-hot vector of the expert assignments
+        [bs k num_experts]
     routing_weights: raw outputs of the routing model (before softmax)
+        [batch_seq num_experts]
     """
 
     G: Float[t.Tensor, "k num_experts"]
-    token_assignments: Int[t.Tensor, "k num_experts"] # token assignments here
+    token_assignments: Int[t.Tensor, "k num_experts"]
 
-    P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
+    P: Int[t.Tensor, "bs k num_experts"]
     routing_weights: Float[t.Tensor, "batch_seq num_experts"]
 
 @dataclass
 class TokenChoiceLayerCache():
     """G: softmaxed routing weights for the top k experts
+        [batch_seq k]
     token_assignments: the top k expert ids
+        [batch_seq k]
+
+    P: one-hot vector of the expert assignments
+        [bs k num_experts]
     routing_weights: raw outputs of the routing model (before softmax)
+        [batch_seq num_experts]
     """
 
     G: Float[t.Tensor, "batch_seq k"]
-    expert_assignments: Int[t.Tensor, "batch_seq k"] # expert assignments here
+    expert_assignments: Int[t.Tensor, "batch_seq k"]
 
-    P: Int[t.Tensor, "bs k num_experts"] # one-hot vector of the expert assignments
+    P: Int[t.Tensor, "bs k num_experts"]
     routing_weights: Float[t.Tensor, "batch_seq num_experts"]
 
 
