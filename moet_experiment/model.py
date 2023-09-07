@@ -31,7 +31,7 @@ class MoET(nn.Module):
     transformer_block: nn.Module
     moe_block: nn.Module
     vocab_size: int
-    cache: ExpertChoiceFullCache
+    cache: Union[ExpertChoiceFullCache, TokenChoiceFullCache]
 
     def __init__(
         self,
@@ -100,7 +100,11 @@ class MoET(nn.Module):
 
         self.sequential_layers = nn.Sequential(layers)
         self.final_norm = RMSNorm(shape_without_batch=(config.hidden_size,))
-        self.cache = ExpertChoiceFullCache({})
+
+        if config.use_expert_choice:
+            self.cache = ExpertChoiceFullCache({})
+        else: # use token choice
+            self.cache = TokenChoiceFullCache({})
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
         out = einsum(

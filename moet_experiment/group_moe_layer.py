@@ -165,7 +165,7 @@ class GroupMoELayer(nn.Module):
 
         # Use the capacity factor to set k
         if c > 0:
-            self.k = int(self.batch_size * self.seq_len * c // self.num_experts)
+            self.k = self.batch_size * self.seq_len * c // self.num_experts
         else:
             self.k = k
 
@@ -229,7 +229,7 @@ class GroupMoELayer(nn.Module):
 
 
         tokens_for_expert = einsum(
-                "bs k expert, bs hidden_size -> expert k hidden_size", P, x
+                "bs k expert, bs hidden_size -> expert k hidden_size", P.float(), x
             )  # expert k hidden_size
 
         # USE EXPERTS
@@ -239,8 +239,19 @@ class GroupMoELayer(nn.Module):
         E = t.stack(E_list, dim=0)  # num_experts k hidden_size
 
         # Put the results back in the right order with the permutation matrix P and weight them correctly with the routing weights G
-        y = einsum(
-            "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P, G, E)
+
+        if self.use_expert_choice:
+            # P [bs k num_experts]
+            # G [k num_experts]
+            # E [num_experts k hidden_size]
+            y = einsum(
+            "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P.float(), G, E)
+        else:
+            # P [bs k num_experts]
+            # G [bs k]
+            # E [num_experts k hidden_size]
+            y = einsum(
+            "bs k expert, bs k, expert k hidden_size -> bs hidden_size", P.float(), G, E)
 
         y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
 
@@ -283,7 +294,7 @@ class GroupMoELayer(nn.Module):
         Having a high expert dropout rate also helps here (a token doesn't know if it was dropped because of later tokens also wanting that expert or because of the expert dropout rate).
         Another way to mitigate this is to fill up the experts left to right so any dropped tokens are dropped from the end of the sequence and the knowledge that a token was dropped is passed only backwards not forwards in time.
 
-        TODO: Add random token-dropping.
+        TODO: Add random token-dropping and Batch Priority Routing (BPR) for inference time.
 
 
         Parameters
@@ -305,8 +316,8 @@ class GroupMoELayer(nn.Module):
         # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
 
         # Select top-k expert, with one-hot vector
-        P = nn.functional.one_hot(
-            chosen_expert_index,
+        P = F.one_hot(
+            chosen_expert_index, num_classes=self.num_experts
         )  # bs k num_experts (one-hot)
 
         # We want to rearrange P. Currently we have a long line of bs such that we see all of the first batch before we see any of the second batch. We would like to see the first elements from all batches then second elements etc.
@@ -326,7 +337,8 @@ class GroupMoELayer(nn.Module):
 
         return G, chosen_expert_index, P
 
-    def _get_first_drop_point(self, P: t.Tensor, k: int) -> Int[t.Tensor, "num_experts"]:
+    @staticmethod
+    def _get_first_drop_point(P: t.Tensor, k: int) -> Int[t.Tensor, "num_experts"]:
         """_summary_
 
         Parameters
@@ -354,7 +366,7 @@ class GroupMoELayer(nn.Module):
         indices = t.nonzero(cumsum_tokens_per_expert >= k)
 
         # Intialise drop_points as -1s for each expert (no dropping)
-        drop_points = -t.ones(cumsum_tokens_per_expert.shape[0])
+        drop_points = t.full((cumsum_tokens_per_expert.shape[0],), -1)
 
         for expert_num, token_num in indices:
             # If cycling through the points we're needing to drop we see an expert that doesn't have a drop point set yet then set it

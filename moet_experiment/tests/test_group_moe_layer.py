@@ -89,6 +89,15 @@ def test_group_moe_layer_exceptions(num_experts = 8):
             c=1.0,
         )
 
+# @pytest.xfail()
 def test_get_first_drop_point():
-    # TODO: test this
-    raise NotImplementedError
+    P = t.zeros_like(t.randn(4, 1, 4))
+    P[0,0,0] = 1
+    P[1,0,0] = 1
+    P[2,0,1] = 1
+    P[3,0,1] = 0
+
+    k = 1
+    drop_points = GroupMoELayer._get_first_drop_point(P = P, k = k)
+
+    assert (drop_points == t.tensor([0, 2, -1, -1])).all()
