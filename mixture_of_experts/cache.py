@@ -28,6 +28,13 @@ class ExpertChoiceLayerCache():
     P: Int[t.Tensor, "bs k num_experts"]
     routing_weights: Float[t.Tensor, "batch_seq num_experts"]
 
+    def detach(self) -> None:
+        self.G = self.G.detach()
+        self.token_assignments = self.token_assignments.detach()
+
+        self.P = self.P.detach()
+        self.routing_weights = self.routing_weights.detach()
+
 @dataclass
 class TokenChoiceLayerCache():
     """G: softmaxed routing weights for the top k experts
@@ -46,6 +53,13 @@ class TokenChoiceLayerCache():
 
     P: Int[t.Tensor, "bs k num_experts"]
     routing_weights: Float[t.Tensor, "batch_seq num_experts"]
+
+    def detach(self) -> None:
+        self.G = self.G.detach()
+        self.token_assignments = self.expert_assignments.detach()
+
+        self.P = self.P.detach()
+        self.routing_weights = self.routing_weights.detach()
 
 
 
@@ -219,7 +233,7 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
 
     @property
     def k(self) -> int:
-        return max([layer_cache.G.shape[0] for idx, layer_cache in self.items()])
+        return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
 
     @property
     def num_experts(self) -> int:
@@ -246,7 +260,7 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
 
     def _pad_k_dim(self) -> None:
         for _, cache in self.items():
-            if cache.G.shape[0] < self.k:
+            if cache.G.shape[1] < self.k:
                 cache.G = repeat(cache.G, "bs k -> bs (2 k)")
                 cache.expert_assignments = repeat(cache.expert_assignments, "bs k -> bs (2 k)")
 
