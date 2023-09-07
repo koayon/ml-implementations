@@ -127,6 +127,38 @@ def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
     return local_entropy_loss.item()
 
 
+def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
+    """Expert load balancing loss introduced in the LIMOE paper. Used in combination with the local entropy loss.
+
+    To combat the issue of the local entropy loss pushing the model towards a single expert (which may all be the same expert!!), we add a global entropy loss which pushes the model towards a uniform distribution over experts.
+
+    From the paper:
+    Intuitively, it is desirable for text tokens to use multiple experts, but not all of them. In order to allow flexibility, we threshold the global entropy loss as Ωτglobal(Gm) = max{0, τ + Ωglobal(Gm)}, such that the model is encouraged to have a certain minimum entropy, but after exceeding that, the loss is not applied. This avoids distributional collapse but does not apply overly restrictive priors on the routing distribution, as there are many optimal solutions. This can be thought of as a “soft minimum” S. With τ = log(S), the model must use at least S experts to minimize the loss (either a uniform distribution across S experts -with entropy log(S)-, or a non-uniform distribution using more than S).
+
+    Reference: https://arxiv.org/pdf/2206.02770.pdf
+
+    Parameters
+    ----------
+    moe_cache : TokenChoiceFullCache
+        _description_
+
+    Returns
+    -------
+    float
+        _description_
+    """
+    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+
+    global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]
+
+    # Calculate the entropy, denoted h in the paper
+    global_entropy_loss = - t.sum(global_routing_probs * t.log(global_routing_probs), dim=0)
+
+    return global_entropy_loss.item()
+
+
 class MoETHFConfig(PretrainedConfig):
 
     def __init__(
