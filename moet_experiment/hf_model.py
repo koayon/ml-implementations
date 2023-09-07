@@ -61,11 +61,43 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
         Router z loss
     """
     router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch_seq]
+
     lse_logits = t.logsumexp(router_logits, dim=-1)  # [layer, num_experts]
     squared_lse_logits = lse_logits ** 2
+
     z_loss = einsum(squared_lse_logits, "layer num_experts ->") / (moe_cache.num_tokens)
 
     return z_loss.item()
+
+def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> float:
+    """Load balancing auxiliary loss for Experts based on balancing expert importance.
+    Square of standard deviation of expert importance across tokens divided by the mean expert importance.
+
+    Reference: Residual Mixture of Experts, https://arxiv.org/pdf/2204.09636.pdf
+
+    Parameters
+    ----------
+    moe_cache : TokenChoiceFullCache
+        _description_
+
+    Returns
+    -------
+    float
+        _description_
+    """
+    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+
+    expert_importance = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
+    flat_expert_importance = rearrange(expert_importance, "layer num_experts -> (layer num_experts)")
+
+    std_expert_importance = t.std(flat_expert_importance)
+    mean_expert_importance = t.mean(flat_expert_importance)
+
+    expert_importance_loss = (std_expert_importance / mean_expert_importance) ** 2
+
+    return expert_importance_loss.item()
+
 
 class MoETHFConfig(PretrainedConfig):
 
