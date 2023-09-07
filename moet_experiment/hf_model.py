@@ -12,7 +12,7 @@ from mixture_of_experts.cache import TokenChoiceFullCache
 from moet_experiment.model import MoET
 
 
-def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
+def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Load balancing auxiliary loss.
 
     Reference: Shazeer et al (2017) and ST-MoE: Designing Stable and Transferable Sparse Expert Models, https://arxiv.org/pdf/2202.08906.pdf
@@ -24,7 +24,7 @@ def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         Load balancing auxiliary loss
     """
     num_experts = moe_cache.num_experts
@@ -41,9 +41,9 @@ def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> float:
     # Dot product
     lb_loss = num_experts * einsum(frac_tokens_per_expert, frac_router_prob_per_expert, "layer expert, layer expert ->")
 
-    return lb_loss.item()
+    return lb_loss
 
-def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
+def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Router z loss.
 
     Reference: ST-MoE: Designing Stable and Transferable Sparse Expert Models, https://arxiv.org/pdf/2202.08906.pdf
@@ -57,7 +57,7 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         Router z loss
     """
     router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch_seq]
@@ -67,9 +67,9 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> float:
 
     z_loss = einsum(squared_lse_logits, "layer num_experts ->") / (moe_cache.num_tokens)
 
-    return z_loss.item()
+    return z_loss
 
-def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> float:
+def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Load balancing auxiliary loss for Experts based on balancing expert importance.
     Square of standard deviation of expert importance across tokens divided by the mean expert importance.
 
@@ -82,7 +82,7 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         _description_
     """
     routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
@@ -96,9 +96,9 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     expert_importance_loss = (std_expert_importance / mean_expert_importance) ** 2
 
-    return expert_importance_loss.item()
+    return expert_importance_loss
 
-def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
+def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Expert load balancing loss introduced in the LIMOE paper. Used in combination with the global entropy loss.
 
     This pushes each tokens towards choosing a single expert more strongly rather than being indifferent between experts.
@@ -112,7 +112,7 @@ def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         _description_
     """
     routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
@@ -124,10 +124,10 @@ def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     local_entropy_loss = t.mean(local_entropy)
 
-    return local_entropy_loss.item()
+    return local_entropy_loss
 
 
-def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
+def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Expert load balancing loss introduced in the LIMOE paper. Used in combination with the local entropy loss.
 
     To combat the issue of the local entropy loss pushing the model towards a single expert (which may all be the same expert!!), we add a global entropy loss which pushes the model towards a uniform distribution over experts.
@@ -144,7 +144,7 @@ def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         _description_
     """
     routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
@@ -156,9 +156,9 @@ def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
     # Calculate the entropy, denoted h in the paper
     global_entropy_loss = - t.sum(global_routing_probs * t.log(global_routing_probs), dim=0)
 
-    return global_entropy_loss.item()
+    return global_entropy_loss
 
-def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> float:
+def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Auxiliary loss for MoE networks which pushes the global routing probabilities towards a uniform distribution.
     KL(p||q) where p is the uniform distribution and q is the global routing probabilities.
 
@@ -169,7 +169,7 @@ def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     Returns
     -------
-    float
+    t.Tensor
         _description_
     """
     routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
@@ -181,7 +181,7 @@ def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> float:
     # Calculate the KL divergence between the global routing probabilities and a uniform distribution
     kl_div = F.kl_div(global_routing_probs, t.ones_like(global_routing_probs) / global_routing_probs.shape[0])
 
-    return kl_div.item()
+    return kl_div
 
 
 class MoETHFConfig(PretrainedConfig):
@@ -245,6 +245,7 @@ class MoET_hf(PreTrainedModel):
             return {"loss": loss, "cross_entropy_loss": cross_entropy_loss,
                     "load_balancing_aux_loss": load_balancing_aux_loss,
                     "router_z_loss": router_z_loss,
-                    "logits": logits}
+                    "labels": labels,
+                    "logits": logits,}
         else:
             return {"logits": logits}

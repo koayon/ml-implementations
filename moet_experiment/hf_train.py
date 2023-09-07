@@ -1,8 +1,10 @@
+import math
 import os
 from functools import lru_cache
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 import evaluate
+import numpy as np
 import pandas as pd
 import torch as t
 from datasets import Dataset, DatasetDict, load_dataset
@@ -14,12 +16,14 @@ from torch.optim import adamw
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    DataCollatorForLanguageModeling,
     PreTrainedModel,
     PreTrainedTokenizerBase,
     TextDataset,
     Trainer,
     TrainingArguments,
 )
+from transformers.data import data_collator
 
 import wandb
 from moet_experiment.hf_model import MoET_hf
@@ -27,7 +31,7 @@ from moet_experiment.moet_config import MoETConfig
 
 EXPERIMENT_NAME = "test"
 EXPERIMENT_GROUP = "test"
-TRAIN = True
+TRAIN = False
 EVALUATE = True
 DEBUG = True
 
@@ -55,7 +59,7 @@ def get_training_args(*, config: MoETConfig, debug: bool=False, deepspeed_config
 
         # Save, log, eval
         # num_train_epochs=config.num_epochs,
-        max_steps = 5 if debug else config.max_steps,
+        max_steps = 2 if debug else config.max_steps,
         warmup_steps = config.warmup_steps,
         logging_strategy = "steps",
         logging_steps=config.logging_steps,
@@ -68,7 +72,8 @@ def get_training_args(*, config: MoETConfig, debug: bool=False, deepspeed_config
         report_to=["wandb"],
     )
 
-def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool=False, tokenizer: PreTrainedTokenizerBase):
+
+def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool=False, tokenizer: PreTrainedTokenizerBase, data_collator: DataCollatorForLanguageModeling):
 
     deepspeed_config = {
         # "fp16": {
@@ -117,7 +122,8 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         "gradient_clipping": "auto",
         "train_batch_size": "auto",
         "train_micro_batch_size_per_gpu": "auto",
-    }
+    } if t.cuda.is_available() else None
+
 
     training_args = get_training_args(config=config, debug=debug, deepspeed_config = deepspeed_config)
 
@@ -137,41 +143,47 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         dict
             Computed metrics.
         """
-        logits, labels = eval_pred
+        outputs, _labels = eval_pred
+
+        loss = outputs[0]
+        logits = outputs[-1]
+        labels = outputs[-2]
+
 
         # Perplexity
-        flattened_logits = rearrange(logits, "b s v -> (b s) v")
-        flattened_labels = rearrange(labels, "b s -> (b s)")
-        loss = F.cross_entropy(flattened_logits, flattened_labels)
-        per_word_loss = loss / flattened_labels.shape[0]
+        per_word_loss = sum(loss)/len(loss)
+        perplexity = math.exp(per_word_loss)
 
-        perplexity = t.exp(-per_word_loss).item()
+        # print("perplexity", perplexity)
 
-        # Exact match
-        preds = t.argmax(logits, dim=-1)
+        # # Exact match
+        # preds = np.argmax(logits, axis = -1)
 
-        preds_str_list = tokenizer.batch_decode(preds, skip_special_tokens=True)
-        labels_str_list = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        # print("preds", preds)
 
-        @lru_cache
-        def get_exact_match_metric() -> EvaluationModule:
-            return evaluate.load("exact_match")
+        # preds_str_list = tokenizer.batch_decode(preds, skip_special_tokens=True)
+        # labels_str_list = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
-        exact_match_metric = get_exact_match_metric()
+        # @lru_cache
+        # def get_exact_match_metric() -> EvaluationModule:
+        #     return evaluate.load("exact_match")
 
-        try:
-            exact_match_dict = exact_match_metric.compute(predictions = preds_str_list, references=labels_str_list)
-            assert exact_match_dict is not None, "Unable to compute the exact_match"
-            exact_match = exact_match_dict["exact_match"]
-        except:
-            exact_match = None
-        return {"perxplexity": perplexity, "exact_match": exact_match}
+        # exact_match_metric = get_exact_match_metric()
+
+        # try:
+        #     exact_match_dict = exact_match_metric.compute(predictions = preds_str_list, references=labels_str_list)
+        #     assert exact_match_dict is not None, "Unable to compute the exact_match"
+        #     exact_match = exact_match_dict["exact_match"]
+        # except:
+        #     exact_match = None
+        # return {"perxplexity": perplexity, "exact_match": exact_match}
+        return {"perplexity": perplexity}
 
     trainer = Trainer(
         model = model,
         args = training_args,
         tokenizer = tokenizer,
-        # data_collator=data_collator,
+        data_collator=data_collator,
         train_dataset = train_dataset, # type: ignore
         eval_dataset = eval_dataset, # type: ignore
         compute_metrics = compute_metrics,
@@ -179,7 +191,7 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
     )
     return trainer
 
-def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path: str, small_train_dataset: TextDataset, small_eval_dataset: TextDataset):
+def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path: str, small_train_dataset: TextDataset, small_eval_dataset: TextDataset, data_collator: DataCollatorForLanguageModeling, training_args: TrainingArguments):
     def wandb_hp_space(trial):
      return {
        "method": "random",
@@ -196,8 +208,6 @@ def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path
             model_name_or_path,
         )
 
-    training_args = get_training_args(config=config, debug=False, deepspeed_config = None)
-
     trainer = Trainer(
         # model=None,
         args=training_args,
@@ -205,7 +215,7 @@ def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path
         eval_dataset=small_eval_dataset,
         # compute_metrics=compute_metrics,
         model_init=model_init,
-        # data_collator=data_collator,
+        data_collator=data_collator,
     )
 
     best_trial = trainer.hyperparameter_search(
@@ -275,7 +285,6 @@ def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame,
 
         print("Saved to evals.csv")
 
-
 def main():
     config = MoETConfig()
 
@@ -303,13 +312,16 @@ def main():
 
     train_dataset: Dataset = processed_dataset["train"]
     eval_dataset = processed_dataset["validation"]
-    eval_dataset = eval_dataset.select(list(range(100)))
+    #Reduce size of eval dataset for testing
+    small_eval_dataset = eval_dataset.select(list(range(100)))
     # print(eval_dataset[0])
 
     runs_df = get_df("runs.csv")
     evals_df = get_df("evals.csv")
 
-    trainer = get_trainer(model = model, train_dataset = train_dataset, eval_dataset=eval_dataset, config = config, tokenizer = tokenizer, debug=DEBUG, )
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    trainer = get_trainer(model = model, train_dataset = train_dataset, eval_dataset=small_eval_dataset, config = config, tokenizer = tokenizer, debug=DEBUG, data_collator = data_collator)
 
     wandb.login()
 
@@ -319,10 +331,10 @@ def main():
     if EVALUATE:
         evaluate_model(trainer = trainer, config = config, evals_df = evals_df, wandb = wandb)
 
-    prompt = eval_dataset.select([100])
-    output = trainer.predict(prompt) # type: ignore
-    print("Prompt: ", prompt)
-    print("Output: ", output)
+    # prompt = eval_dataset.select([10])
+    # output = trainer.predict(prompt) # type: ignore
+    # print("Prompt: ", prompt)
+    # print("Output: ", output)
 
 if __name__ == "__main__":
     main()
