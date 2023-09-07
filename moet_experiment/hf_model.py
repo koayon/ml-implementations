@@ -158,6 +158,31 @@ def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> float:
 
     return global_entropy_loss.item()
 
+def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> float:
+    """Auxiliary loss for MoE networks which pushes the global routing probabilities towards a uniform distribution.
+    KL(p||q) where p is the uniform distribution and q is the global routing probabilities.
+
+    Parameters
+    ----------
+    moe_cache : TokenChoiceFullCache
+        _description_
+
+    Returns
+    -------
+    float
+        _description_
+    """
+    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+
+    global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]
+
+    # Calculate the KL divergence between the global routing probabilities and a uniform distribution
+    kl_div = F.kl_div(global_routing_probs, t.ones_like(global_routing_probs) / global_routing_probs.shape[0])
+
+    return kl_div.item()
+
 
 class MoETHFConfig(PretrainedConfig):
 
