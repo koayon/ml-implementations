@@ -71,7 +71,7 @@ class Router(nn.Module):
         AssertionError: If router_str is "hash" and input_tokens is None.
         """
 
-        if self.router_str == "hash":
+        if self.router_enum == RouterEnums["hash"]:
             assert input_tokens is not None
 
             input_tokens = rearrange(input_tokens, "b s -> (b s)")
@@ -82,7 +82,7 @@ class Router(nn.Module):
 
         # Add gumbel noise to the routing logits to encourage exploration during training
         # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
-        if self.training and (self.router_str in ("learned", "linear")):
+        if self.training and (self.router_enum in (RouterEnums.linear, RouterEnums.learned)):
             gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
             h = (clean_h + gumbel_noise) / self.router_temperature
             return h # bs num_experts
@@ -109,7 +109,7 @@ class GroupMoELayer(nn.Module):
         c: float = 1.0,  # capacity factor
         ffn_dim_multiplier: int = 4,
         ffn_ratio: float = 2 / 3,
-        # use_expert_choice: bool = True,
+        use_expert_choice: Optional[bool] = None,
     ) -> None:
         super().__init__()
 
@@ -120,7 +120,7 @@ class GroupMoELayer(nn.Module):
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
-        self.use_expert_choice = config.use_expert_choice
+        self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
 
         self.router_weights_passed_separately = router_weights_passed_separately
 
