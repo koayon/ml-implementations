@@ -9,4 +9,4 @@ Experiments:
   - See the trade-off using MoE for the shared wide layer.
   - Try using different routers to each MoE layer.
   - Try sharing parameters in the MoE with Group Layers to get a better memory footprint to performance trade-off.
-  - Try with many more attention heads with shared params across layers but routing to only a few of them. (Maybe with larger attention heads to make up for using only a few of them?)
+  - Try sharing attention heads but having more/larger ones to maintain parameters and routing to only a few of them. (Maybe with larger attention heads to make up for using only a few of them?)

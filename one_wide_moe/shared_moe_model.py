@@ -47,6 +47,7 @@ class SharedParamsMoEModel(nn.Module):
         share_attention_layers: bool = True,
         share_moe_layers: bool = False,
         share_routers: bool = False,
+        group_size: int = 1,
     ):
         super().__init__()
         self.config = config
@@ -73,8 +74,7 @@ class SharedParamsMoEModel(nn.Module):
                 attn_layers[f"attn_layer_{i}"] = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
 
         if share_moe_layers:
-            single_moe_layer = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer", router_weights_passed_separately=self.router_weights_passed_separately,
-                                            # hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier
+            single_moe_layer = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer", router_weights_passed_separately=self.router_weights_passed_separately, ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
             attn_layers = OrderedDict(
                 {
@@ -85,8 +85,7 @@ class SharedParamsMoEModel(nn.Module):
 
         else:
             for i in range(self.config.num_total_layers):
-                moe_layers[f"ffn_layer_{i}"] = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", router_weights_passed_separately=self.router_weights_passed_separately,
-                                            # hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier
+                moe_layers[f"ffn_layer_{i}"] = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", router_weights_passed_separately=self.router_weights_passed_separately, ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
 
         if share_routers:

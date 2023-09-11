@@ -52,3 +52,24 @@ def test_shared_params_dense_model(
     # Check that forward pass works
     y, _cache = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
+
+
+def test_group_shared_moe_model():
+    model = SharedParamsMoEModel(ffn_dim_multiplier=4, num_experts = 8, share_attention_layers=False, share_moe_layers=True, share_routers = False, group_size = 2)
+    # model.to(device)
+
+    input_str = "Hello world"
+    tokens_list = tokenizer(input_str)["input_ids"]
+
+    input = repeat(
+        t.tensor(tokens_list, device=device),
+        "seq_len -> batch seq_len",
+        batch=2,
+    )  # batch seq
+    # input.to(device)
+
+    seq_len = input.shape[1]
+
+    # Check that forward pass works
+    y, _cache = model(input)
+    assert (2, seq_len, model.config.vocab_size) == y.shape
