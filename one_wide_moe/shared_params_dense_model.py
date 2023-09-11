@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from itertools import chain
 from typing import Any, Dict, List, Optional, OrderedDict, Protocol, Tuple, Union
 
 import torch as t
@@ -40,18 +41,46 @@ class SharedParamsDenseModel(nn.Module):
         *,
         ffn_dim_multiplier: int = 4,
         config: OneWideConfig = config,
+        share_attention_layers: bool = True,
+        share_ffn_layers: bool = False,
     ):
         super().__init__()
         self.config = config
 
         self.num_layers = config.num_total_layers
 
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        attn_layers: OrderedDict[str, nn.Module] = OrderedDict()
+        ffn_layers: OrderedDict[str, nn.Module] = OrderedDict()
 
-        for i in range(self.config.num_total_layers):
-            layers[f"attn_block_{i}"] = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
+        if share_attention_layers:
+            single_attention_layer = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
+            attn_layers = OrderedDict(
+                {
+                    f"attn_layer_{i}": single_attention_layer
+                    for i in range(self.config.num_total_layers)
+                }
+            )
+        else:
+            for i in range(self.config.num_total_layers):
+                attn_layers[f"attn_layer_{i}"] = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
 
-        self.single_ffn_layer = FFN(hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier)
+        if share_ffn_layers:
+            single_ffn_layer = FFN(hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier)
+            attn_layers = OrderedDict(
+                {
+                    f"ffn_layer_{i}": single_ffn_layer
+                    for i in range(self.config.num_total_layers)
+                }
+            )
+
+        else:
+            for i in range(self.config.num_total_layers):
+                ffn_layers[f"ffn_layer_{i}"] = FFN(hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier)
+
+        # Interleave the attention and ffn layers
+        zipped_dicts = zip(attn_layers.items(), ffn_layers.items())
+        layers = OrderedDict(chain.from_iterable(zipped_dicts))
+
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
 
@@ -73,8 +102,10 @@ class SharedParamsDenseModel(nn.Module):
         x = self.token_embedding(input_ids)
 
         for idx, layer in self.sequential_layers.named_children():
-            x, _attention_cache = layer(x)
-            x = self.single_ffn_layer(x)
+            if idx.startswith("attn_layer"):
+                x, _attention_cache = layer(x)
+            else:
+                x = layer(x)
 
         z = self.final_norm(x)
 
