@@ -26,8 +26,6 @@ def test_shared_params_dense_model(
 
     seq_len = input.shape[1]
 
-    print(input.device)
-
     # Check that forward pass works
-    y, _cache = model(input)
+    y = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
