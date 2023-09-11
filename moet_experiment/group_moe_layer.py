@@ -93,7 +93,9 @@ class GroupMoELayer(nn.Module):
         num_experts: int,
         layer_id: str,
         router_str: str = "linear",
+        router: Optional[Router] = None,
         config: MoETConfig = MoETConfig(),
+        router_weights: Optional[t.Tensor] = None,
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
@@ -116,11 +118,19 @@ class GroupMoELayer(nn.Module):
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
 
-        self.router = Router(
-            num_experts=num_experts,
-            router_str=router_str,
-            config=config,
-        )
+        if router:
+            # If we've passed in a router then use that
+            self.router = router
+        elif router_weights:
+            # If we've passed in router weights then pass those through as h
+            self.router = None
+            self.router_weights = router_weights
+        else: # Otherwise create a new router
+            self.router = Router(
+                num_experts=num_experts,
+                router_str=router_str,
+                config=config,
+            )
 
         if group_size > 1:
 
@@ -202,8 +212,15 @@ class GroupMoELayer(nn.Module):
 
         x = rearrange(x, "b s h -> (b s) h")
 
-        # Get routing weights, h
-        h = self.router(x, input_tokens)  # (b s) num_experts
+        if self.router_weights:
+            # Use the precomputed router weights if provided
+            assert self.router_weights.shape == (batch_size * seq_len, self.num_experts)
+
+            h = self.router_weights
+        else:
+            # Get routing weights, h
+            assert self.router
+            h = self.router(x, input_tokens)  # (b s) num_experts
 
         S = t.softmax(h, dim=-1)  # bs num_experts
 
