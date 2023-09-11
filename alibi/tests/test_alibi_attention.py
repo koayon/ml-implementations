@@ -8,11 +8,12 @@ from alibi.attention import AlibiUnidirectionalAttention
 from general import device
 
 
-def test_alibi_attention(hidden_size: int = 16,
+def test_alibi_mask(hidden_size: int = 16,
         num_heads: int = 8,
         seq_len: int = 6,
         dropout: float = 0
     ):
+
     attention = AlibiUnidirectionalAttention(
         hidden_size=hidden_size,
         num_heads=num_heads,
@@ -37,5 +38,20 @@ def test_alibi_attention(hidden_size: int = 16,
 
     # Do visual check on the atteniton matrix. Can also do this with hooks.
 
+def test_alibi_attention(hidden_size: int = 16,
+        num_heads: int = 8,
+        seq_len: int = 6,
+        dropout: float = 0
+    ):
+    attention = AlibiUnidirectionalAttention(
+        hidden_size=hidden_size,
+        num_heads=num_heads,
+        dropout = dropout
+    )
+
+    x = t.randn(1, seq_len, hidden_size)
+    out, _ = attention(x)
+    assert out.shape == (1, seq_len, hidden_size)
+
 if __name__ == "__main__":
-    test_alibi_attention()
+    test_alibi_mask()
