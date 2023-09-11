@@ -9,7 +9,6 @@ from moet_experiment.model import MoET
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
 
-
 @pytest.mark.parametrize("batch_size", [2, 4])
 def test_moet_model(
     batch_size: int,
@@ -34,6 +33,12 @@ def test_moet_model(
     # Check that forward pass works
     y, _cache = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
+
+    # Check that gradients are propagated
+    t.sum(t.flatten(y)).backward()
+    assert input.grad is not None
+    assert input.grad.shape == input.shape
+    assert input.grad.requires_grad is False
 
 
 def test_moet_model_exceptions(batch_size: int = 4, seq_len: int = 8):

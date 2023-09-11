@@ -324,9 +324,6 @@ def logit_lens_before_and_after_expert(
     add_in_hooks(layer.ln2, name, activations)  # type: ignore
     add_out_hooks(layer.expert_layer, name, activations)  # type: ignore
 
-    # TODO: Confused that even the tokens not routed to our expert seem to have changed?
-    # Examine this
-
     # Forward pass and get activations
     with t.inference_mode():
         with t.no_grad():

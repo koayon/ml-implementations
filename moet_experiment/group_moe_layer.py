@@ -28,9 +28,11 @@ class RouterEnums(Enum):
     hash = auto()
     router_weights_passed_separately = auto()
 
+
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 # config = MoETConfig()
+
 
 class Router(nn.Module):
     def __init__(self, *, num_experts: int, router_str: str, config: MoETConfig):
@@ -45,16 +47,18 @@ class Router(nn.Module):
         if self.router_enum in (RouterEnums.linear, RouterEnums.learned):
             # Define the linear router
             self.linear = nn.Linear(self.hidden_size, self.num_experts)
-        elif  self.router_enum == RouterEnums.hash:
+        elif self.router_enum == RouterEnums.hash:
             # Build the hash router
             assert config.num_experts_hash == self.num_experts
-            self.hash_router = HashRouter(config=config, num_experts=config.num_experts_hash)
+            self.hash_router = HashRouter(
+                config=config, num_experts=config.num_experts_hash)
             # self.hash_router.build_random_hash()
         elif self.router_enum == RouterEnums.router_weights_passed_separately:
             # Router will be passed in separately
             pass
         else:
-            raise ValueError(f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
+            raise ValueError(
+                f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
 
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
@@ -85,9 +89,9 @@ class Router(nn.Module):
         if self.training and (self.router_enum in (RouterEnums.linear, RouterEnums.learned)):
             gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
             h = (clean_h + gumbel_noise) / self.router_temperature
-            return h # bs num_experts
+            return h  # bs num_experts
         else:
-            return clean_h # bs num_experts
+            return clean_h  # bs num_experts
 
 
 class GroupMoELayer(nn.Module):
@@ -136,13 +140,12 @@ class GroupMoELayer(nn.Module):
         elif self.router_weights_passed_separately:
             # If we're passing in the router separately then we don't need to create one here
             self.router = None
-        else: # Otherwise create a new router
+        else:  # Otherwise create a new router
             self.router = Router(
                 num_experts=num_experts,
                 router_str=router_str,
                 config=config,
             )
-
 
         if group_size > 1:
 
@@ -150,13 +153,15 @@ class GroupMoELayer(nn.Module):
             up_experts = [
                 nn.Linear(
                     in_features=self.hidden_size,
-                    out_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
+                    out_features=int(self.hidden_size *
+                                     ffn_dim_multiplier * ffn_ratio),
                 )
                 for _ in range(self.num_expert_groups)
             ]
             down_experts = [
                 nn.Linear(
-                    in_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
+                    in_features=int(self.hidden_size *
+                                    ffn_dim_multiplier * ffn_ratio),
                     out_features=self.hidden_size,
                 )
                 for _ in range(self.num_experts)
@@ -183,7 +188,8 @@ class GroupMoELayer(nn.Module):
             expert = SwiGLUFFN(
                 in_features=self.hidden_size, dropout=config.expert_dropout
             )
-            self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
+            self.experts = nn.ModuleList(
+                [expert for _ in range(self.num_experts)])
 
         # Use the capacity factor to set k
         if c > 0:
@@ -226,7 +232,8 @@ class GroupMoELayer(nn.Module):
 
         if router_weights:
             # Use the precomputed router weights if provided
-            assert router_weights.shape == (batch_size * seq_len, self.num_experts)
+            assert router_weights.shape == (
+                batch_size * seq_len, self.num_experts)
 
             h = router_weights
         else:
@@ -237,17 +244,19 @@ class GroupMoELayer(nn.Module):
         S = t.softmax(h, dim=-1)  # bs num_experts
 
         if self.use_expert_choice:
-            G, chosen_token_index, P = self._expert_choice_routing_matrices(S = S, batch_size = batch_size, seq_len = seq_len)
+            G, chosen_token_index, P = self._expert_choice_routing_matrices(
+                S=S, batch_size=batch_size, seq_len=seq_len)
 
             layer_cache = ExpertChoiceLayerCache(
-                    G=G,
-                    P = P,
-                    token_assignments=chosen_token_index,
-                    routing_weights=h,
-                )
+                G=G,
+                P=P,
+                token_assignments=chosen_token_index,
+                routing_weights=h,
+            )
 
         else:
-            G, chosen_expert_index, P = self._token_choice_routing_matrices(S = S, batch_size=batch_size)
+            G, chosen_expert_index, P = self._token_choice_routing_matrices(
+                S=S, batch_size=batch_size)
 
             layer_cache = TokenChoiceLayerCache(
                 G=G,
@@ -256,14 +265,14 @@ class GroupMoELayer(nn.Module):
                 routing_weights=h,
             )
 
-
         tokens_for_expert = einsum(
-                "bs k expert, bs hidden_size -> expert k hidden_size", P.float(), x
-            )  # expert k hidden_size
+            "bs k expert, bs hidden_size -> expert k hidden_size", P.float(), x
+        )  # expert k hidden_size
 
         # USE EXPERTS
         # forward the relevant tokens through the relevant expert
-        E_list = [self.experts[expert_num](tokens_for_expert[expert_num]) for expert_num in range(self.num_experts)]  # num_experts list[k hidden_size]
+        E_list = [self.experts[expert_num](tokens_for_expert[expert_num]) for expert_num in range(
+            self.num_experts)]  # num_experts list[k hidden_size]
 
         E = t.stack(E_list, dim=0)  # num_experts k hidden_size
 
@@ -274,15 +283,16 @@ class GroupMoELayer(nn.Module):
             # G [k num_experts]
             # E [num_experts k hidden_size]
             y = einsum(
-            "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P.float(), G, E)
+                "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P.float(), G, E)
         else:
             # P [bs k num_experts]
             # G [bs k]
             # E [num_experts k hidden_size]
             y = einsum(
-            "bs k expert, bs k, expert k hidden_size -> bs hidden_size", P.float(), G, E)
+                "bs k expert, bs k, expert k hidden_size -> bs hidden_size", P.float(), G, E)
 
-        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
+        y = rearrange(
+            y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
 
         return y, layer_cache
 
@@ -305,14 +315,16 @@ class GroupMoELayer(nn.Module):
         # If there aren't enough tokens in the input to select top k, reduce k
         self.k = min(int(self.k), (batch_size * seq_len))
 
-        G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
+        G, chosen_token_index = t.topk(
+            S, k=self.k, dim=0)  # k num_experts each
 
         # Select top-k expert, with one-hot vector. P is the permutation matrix
         P: t.Tensor = F.one_hot(
             chosen_token_index, num_classes=batch_size * seq_len
         )  # k num_experts bs (one-hot)
 
-        P = rearrange(P, "k num_experts bs -> bs k num_experts").float()  # bs k num_experts
+        # bs k num_experts
+        P = rearrange(P, "k num_experts bs -> bs k num_experts").float()
 
         return G, chosen_token_index, P
 
@@ -353,18 +365,20 @@ class GroupMoELayer(nn.Module):
 
         # We want to rearrange P. Currently we have a long line of bs such that we see all of the first batch before we see any of the second batch. We would like to see the first elements from all batches then second elements etc.
         # This means there's less variance in performance depending on where you happen to be within a batch
-        P = rearrange(P, "(b s) k num_experts -> (s b) k num_experts", b = batch_size)  # sb k num_experts
+        P = rearrange(P, "(b s) k num_experts -> (s b) k num_experts",
+                      b=batch_size)  # sb k num_experts
 
-        drop_points = self._get_first_drop_point(P = P, k = self.k)
+        drop_points = self._get_first_drop_point(P=P, k=self.k)
 
         for expert_num in range(self.num_experts):
             # Set everything after the drop point to 0
-            P[drop_points[expert_num]:, :, expert_num] = 0 # sb k num_experts
+            P[drop_points[expert_num]:, :, expert_num] = 0  # sb k num_experts
 
         # Now P defines a permutation matrix where each expert gets at most k tokens.
 
         # Rearrange P back to the usual shape
-        P = rearrange(P, "(s b) k num_experts -> (b s) k num_experts", b = batch_size) # bs k num_experts
+        P = rearrange(P, "(s b) k num_experts -> (b s) k num_experts",
+                      b=batch_size)  # bs k num_experts
 
         return G, chosen_expert_index, P
 
@@ -391,8 +405,10 @@ class GroupMoELayer(nn.Module):
 
         tokens_per_expert = t.sum(P, dim=1)  # sb num_experts
 
-        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # sb num_experts
-        cumsum_tokens_per_expert = rearrange(cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
+        cumsum_tokens_per_expert = t.cumsum(
+            tokens_per_expert, dim=0)  # sb num_experts
+        cumsum_tokens_per_expert = rearrange(
+            cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
         # All the indices where we need to drop
         indices = t.nonzero(cumsum_tokens_per_expert >= k)
 
@@ -404,7 +420,7 @@ class GroupMoELayer(nn.Module):
             if drop_points[expert_num] == -1:
                 drop_points[expert_num] = token_num
 
-        return drop_points # num_experts
+        return drop_points  # num_experts
 
 
 def main():
