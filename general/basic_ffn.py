@@ -14,8 +14,8 @@ class FFN(nn.Module):
         self,
         *,
         hidden_size: int,
-        dropout: float,
-        activation_function: str,
+        activation_function: str = "gelu",
+        dropout: float = 0.1,
         multiplier: int = 4,
     ) -> None:
         super().__init__()
