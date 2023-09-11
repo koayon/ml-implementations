@@ -66,7 +66,7 @@ class SharedParamsDenseModel(nn.Module):
 
         if share_ffn_layers:
             single_ffn_layer = FFN(hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier)
-            attn_layers = OrderedDict(
+            ffn_layers = OrderedDict(
                 {
                     f"ffn_layer_{i}": single_ffn_layer
                     for i in range(self.config.num_total_layers)
@@ -77,11 +77,14 @@ class SharedParamsDenseModel(nn.Module):
             for i in range(self.config.num_total_layers):
                 ffn_layers[f"ffn_layer_{i}"] = FFN(hidden_size = config.hidden_size, multiplier = ffn_dim_multiplier)
 
+        assert len(attn_layers) == len(ffn_layers) == self.config.num_total_layers
+
         # Interleave the attention and ffn layers
         zipped_dicts = zip(attn_layers.items(), ffn_layers.items())
         layers = OrderedDict(chain.from_iterable(zipped_dicts))
 
 
+        # Define the model layers
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
 
         self.sequential_layers = nn.Sequential(layers)

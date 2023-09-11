@@ -9,6 +9,7 @@ from general.norms import RMSNorm
 from mixture_of_experts.cache import (
     ExpertChoiceFullCache,
     ExpertChoiceLayerCache,
+    MoELayerCache,
     TokenChoiceLayerCache,
 )
 from moet_experiment.group_moe_layer import GroupMoELayer
@@ -67,7 +68,7 @@ class MoETBlock(nn.Module):
 
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
-    ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
+    ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         x: batch seq hidden_size
 

@@ -1,6 +1,5 @@
-import re
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Union
 
 import torch as t
 from einops import rearrange, repeat
@@ -265,3 +264,7 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
                 cache.expert_assignments = repeat(cache.expert_assignments, "bs k -> bs (2 k)")
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")
+
+
+MoELayerCache = Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]
+MoECache = Union[ExpertChoiceFullCache, TokenChoiceFullCache]
