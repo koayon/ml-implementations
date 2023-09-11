@@ -21,9 +21,12 @@ from mixture_of_experts.cache import (
 from mixture_of_experts.routers import HashRouter
 from moet_experiment.moet_config import MoETConfig
 
-ROUTERS = ["linear", "learned", "hash", "router_passed_separately"]
-MULT = 4
-RATIO = 2 / 3
+
+class RouterEnums(Enum):
+    linear = auto()
+    learned = auto()
+    hash = auto()
+    router_weights_passed_separately = auto()
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
@@ -34,21 +37,24 @@ class Router(nn.Module):
         super().__init__()
         self.config = config
 
-        self.router_str = router_str
+        self.router_enum = RouterEnums[router_str]
         self.router_temperature = config.router_temperature
         self.num_experts = num_experts
         self.hidden_size = config.hidden_size
 
-        if router_str in ("linear", "learned"):
+        if self.router_enum in (RouterEnums.linear, RouterEnums.learned):
             # Define the linear router
             self.linear = nn.Linear(self.hidden_size, self.num_experts)
-        elif router_str == "hash":
+        elif  self.router_enum == RouterEnums.hash:
             # Build the hash router
             assert config.num_experts_hash == self.num_experts
             self.hash_router = HashRouter(config=config, num_experts=config.num_experts_hash)
             # self.hash_router.build_random_hash()
+        elif self.router_enum == RouterEnums.router_weights_passed_separately:
+            # Router will be passed in separately
+            pass
         else:
-            raise ValueError(f"Unknown router {router_str}. Please choose from {ROUTERS}")
+            raise ValueError(f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
 
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
@@ -95,11 +101,14 @@ class GroupMoELayer(nn.Module):
         num_experts: int,
         layer_id: str,
         router_str: str = "linear",
+        router_weights_passed_separately: bool = False,
         router: Optional[Router] = None,
         config: MoETConfig = MoETConfig(),
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
+        ffn_dim_multiplier: int = 4,
+        ffn_ratio: float = 2 / 3,
         # use_expert_choice: bool = True,
     ) -> None:
         super().__init__()
@@ -107,11 +116,13 @@ class GroupMoELayer(nn.Module):
         # Either choose k or set it from the capacity factor (c)
         assert (k > 0) or (c > 0)
         assert num_experts % group_size == 0
-        assert router_str in ROUTERS
+        assert router_str in RouterEnums._member_names_
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
         self.use_expert_choice = config.use_expert_choice
+
+        self.router_weights_passed_separately = router_weights_passed_separately
 
         self.layer_id = layer_id
 
@@ -122,7 +133,8 @@ class GroupMoELayer(nn.Module):
         if router:
             # If we've passed in a router then use that
             self.router = router
-        elif router_str == "none":
+        elif self.router_weights_passed_separately:
+            # If we're passing in the router separately then we don't need to create one here
             self.router = None
         else: # Otherwise create a new router
             self.router = Router(
@@ -138,13 +150,13 @@ class GroupMoELayer(nn.Module):
             up_experts = [
                 nn.Linear(
                     in_features=self.hidden_size,
-                    out_features=int(self.hidden_size * MULT * RATIO),
+                    out_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
                 )
                 for _ in range(self.num_expert_groups)
             ]
             down_experts = [
                 nn.Linear(
-                    in_features=int(self.hidden_size * MULT * RATIO),
+                    in_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
                     out_features=self.hidden_size,
                 )
                 for _ in range(self.num_experts)
