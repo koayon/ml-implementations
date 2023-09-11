@@ -4,18 +4,15 @@ from einops import repeat
 from transformers import AutoTokenizer
 
 from general import device
-from moet_experiment.model import MoET
+from one_wide_moe.shared_params_dense_model import SharedParamsDenseModel
 
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
+model = SharedParamsDenseModel()
+# model.to(device)
 
-
-
-@pytest.mark.parametrize("batch_size", [2, 4])
-def test_moet_model(
-    batch_size: int,
+def test_shared_params_dense_model(
+    batch_size: int = 2,
 ):
-    model = MoET()
-    # model.to(device)
 
     input_str = "Hello world"
     tokens_list = tokenizer(input_str)["input_ids"]
@@ -34,12 +31,3 @@ def test_moet_model(
     # Check that forward pass works
     y, _cache = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
-
-
-def test_moet_model_exceptions(batch_size: int = 4, seq_len: int = 8):
-    model = MoET()
-
-    # Test invalid number of dimensions
-    input = t.randint(high=50_000, size=(batch_size, seq_len, 512))
-    with pytest.raises(ValueError):
-        model(input)
