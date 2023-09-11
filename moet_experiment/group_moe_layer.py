@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any, Optional, Tuple, Union
 
 import torch as t
@@ -13,13 +14,14 @@ from helpers import einsum
 from mixture_of_experts.cache import (
     ExpertChoiceFullCache,
     ExpertChoiceLayerCache,
+    MoELayerCache,
     TokenChoiceFullCache,
     TokenChoiceLayerCache,
 )
 from mixture_of_experts.routers import HashRouter
 from moet_experiment.moet_config import MoETConfig
 
-ROUTERS = ["linear", "learned", "hash"]
+ROUTERS = ["linear", "learned", "hash", "router_passed_separately"]
 MULT = 4
 RATIO = 2 / 3
 
@@ -95,11 +97,10 @@ class GroupMoELayer(nn.Module):
         router_str: str = "linear",
         router: Optional[Router] = None,
         config: MoETConfig = MoETConfig(),
-        router_weights: Optional[t.Tensor] = None,
         group_size: int = 1,
         k: int = 0,  # topk
         c: float = 1.0,  # capacity factor
-        use_expert_choice: bool = True,
+        # use_expert_choice: bool = True,
     ) -> None:
         super().__init__()
 
@@ -121,16 +122,15 @@ class GroupMoELayer(nn.Module):
         if router:
             # If we've passed in a router then use that
             self.router = router
-        elif router_weights:
-            # If we've passed in router weights then pass those through as h
+        elif router_str == "none":
             self.router = None
-            self.router_weights = router_weights
         else: # Otherwise create a new router
             self.router = Router(
                 num_experts=num_experts,
                 router_str=router_str,
                 config=config,
             )
+
 
         if group_size > 1:
 
@@ -182,8 +182,8 @@ class GroupMoELayer(nn.Module):
         # print(layer_id, "- k: ", self.k)
 
     def forward(
-        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
-    ) -> Tuple[t.Tensor, Union[ExpertChoiceLayerCache, TokenChoiceLayerCache]]:
+        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None, router_weights: Optional[t.Tensor] = None
+    ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         For interpretability uses we want to hook and cache G (the top k softmaxed router weights - either over tokens or experts).
         We also want the chosen token/expert indices known as the assignments.
@@ -212,11 +212,11 @@ class GroupMoELayer(nn.Module):
 
         x = rearrange(x, "b s h -> (b s) h")
 
-        if self.router_weights:
+        if router_weights:
             # Use the precomputed router weights if provided
-            assert self.router_weights.shape == (batch_size * seq_len, self.num_experts)
+            assert router_weights.shape == (batch_size * seq_len, self.num_experts)
 
-            h = self.router_weights
+            h = router_weights
         else:
             # Get routing weights, h
             assert self.router
@@ -273,6 +273,8 @@ class GroupMoELayer(nn.Module):
         y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
 
         return y, layer_cache
+
+    # TODO: Decouple MoE layer from Router
 
     def _expert_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
