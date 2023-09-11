@@ -61,6 +61,69 @@ class AlibiUnidirectionalAttention(nn.Module):
         else:
             self.m_list = [1 / (2 ** (i / 2)) for i in range(self.num_heads)]
 
+    def get_qkv(self, x: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+        # Apply W_qkv to x to get q, k, v
+        qkv = self.qkv_proj(x)  # (batch, seq, 3 * num_heads * head_size)
+        q, k, v = t.split(
+            qkv, (self.num_heads * self.head_size), dim=-1
+        )  # (batch, seq, num_heads * head_size)
+
+        q = rearrange(
+            q, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
+        )
+        k = rearrange(
+            k, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
+        )
+        v = rearrange(
+            v, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
+        )
+
+        return q, k, v
+
+    def forward(
+            self, x: t.Tensor, layer_cache: Optional[Any] = None
+        ) -> Tuple[t.Tensor, None]:
+        """
+        x: shape (batch, seq, hidden_size)
+
+        Return: shape (batch, seq, hidden_size)
+        """
+        _batch, seq_length, hidden_size = x.shape
+        assert hidden_size == self.hidden_size
+
+        # Apply W_qkv projection to x to get q, k, v
+        q, k, v = self.get_qkv(x) # batch head seq dim each
+
+        # Combine q and k to get attention scores
+        q_k = einsum("batch head_num seq_i hidden_dim, batch head_num seq_j hidden_dim -> batch head_num seq_i seq_j", q, k)  # batch, num_heads, seq, seq
+
+        # Apply mask (note we don't scale by sqrt(d_k) as normal with ALiBi)
+        mask = self.get_alibi_mask(seq_length).to(x.device)  # 1 num_heads seq seq
+        masked_attention_scores = q_k + mask
+
+        attn_matrix = self.attn_dropout(
+            F.softmax(masked_attention_scores, dim=-1)
+        )  # seq, seq
+
+        # print(attn_matrix)
+
+        # For each query vector, combine with the weighted average value vector
+        combined_with_v = einsum(
+            "batch head seq seq_i, batch head seq_i hidden_dim -> batch head seq hidden_dim",
+            attn_matrix,
+            v,
+        )  # batch, num_heads, seq, hidden_size
+        combined_with_v = rearrange(
+            combined_with_v, "batch head seq hidden_dim -> batch seq (head hidden_dim)"
+        )  # batch, seq, hidden_size*num_heads
+
+        out = self.output_proj(combined_with_v)  # batch, seq, hidden_size
+        out = self.resid_dropout(out)
+
+        return out, None
+
+        # TODO: Cache KV Cache for inference!
+
     @lru_cache
     def regular_mask(self, seq_length: int) -> t.Tensor:
         ones = t.ones(seq_length, seq_length)
@@ -92,64 +155,6 @@ class AlibiUnidirectionalAttention(nn.Module):
         )  # 1 num_heads seq seq
 
         return mask
-
-    def forward(
-        self, x: t.Tensor, layer_cache: Optional[Any] = None
-    ) -> Tuple[t.Tensor, None]:
-        """
-        x: shape (batch, seq, hidden_size)
-
-        Return: shape (batch, seq, hidden_size)
-        """
-        _batch, seq_length, hidden_size = x.shape
-        assert hidden_size == self.hidden_size
-
-        # Apply W_qkv to x to get q, k, v
-        qkv = self.qkv_proj(x)  # (batch, seq, 3 * num_heads * head_size)
-        q, k, v = t.split(
-            qkv, (self.num_heads * self.head_size), dim=-1
-        )  # (batch, seq, num_heads * head_size)
-
-        q = rearrange(
-            q, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
-        )
-        k = rearrange(
-            k, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
-        )
-        v = rearrange(
-            v, "batch seq (head dim) -> batch head seq dim", dim=self.head_size
-        )
-
-        # Combine q and k to get attention scores
-        q_k = t.einsum("bnih,bnjh->bnij", q, k)  # batch, num_heads, seq, seq
-
-        # Apply mask (note we don't scale by sqrt(d_k) as normal with ALiBi)
-        mask = self.get_alibi_mask(seq_length).to(x.device)  # 1 num_heads seq seq
-
-        masked_attention_scores = q_k + mask
-
-        attn_matrix = self.attn_dropout(
-            F.softmax(masked_attention_scores, dim=-1)
-        )  # seq, seq
-
-        # print(attn_matrix)
-
-        # For each query vector, combine with the weighted average value vector
-        combined_with_v = einsum(
-            "batch head seq seq_i, batch head seq_i hidden_dim -> batch head seq hidden_dim",
-            attn_matrix,
-            v,
-        )  # batch, num_heads, seq, hidden_size
-        combined_with_v = rearrange(
-            combined_with_v, "batch head seq hidden_dim -> batch seq (head hidden_dim)"
-        )  # batch, seq, hidden_size*num_heads
-
-        out = self.output_proj(combined_with_v)  # batch, seq, hidden_size
-        out = self.resid_dropout(out)
-
-        return out, None
-
-        # TODO: Cache KV Cache for inference!
 
 
 if __name__ == "__main__":
