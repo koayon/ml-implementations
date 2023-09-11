@@ -28,7 +28,7 @@ config = OneWideConfig()
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
 
-class RegularDenseModel(nn.Module):
+class SharedParamsDenseModel(nn.Module):
     token_embedding: nn.Embedding
     pos_embedding: nn.Embedding
     transformer_block: nn.Module
