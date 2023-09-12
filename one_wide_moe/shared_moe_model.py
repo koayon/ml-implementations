@@ -14,6 +14,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 from alibi.attention import AlibiUnidirectionalAttention
 from alibi.transformer_block import ALiBiTransformerBlock
+from general import device
 from general.basic_ffn import FFN
 from general.norms import RMSNorm
 from gpt.cached_attention import AttentionCache
@@ -76,16 +77,16 @@ class SharedParamsMoEModel(nn.Module):
         if share_moe_layers:
             single_moe_layer = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer", router_weights_passed_separately=self.router_weights_passed_separately, ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
-            attn_layers = OrderedDict(
+            moe_layers = OrderedDict(
                 {
-                    f"ffn_layer_{i}": single_moe_layer
+                    f"moe_layer_{i}": single_moe_layer
                     for i in range(self.config.num_total_layers)
                 }
             )
 
         else:
             for i in range(self.config.num_total_layers):
-                moe_layers[f"ffn_layer_{i}"] = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", router_weights_passed_separately=self.router_weights_passed_separately, ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
+                moe_layers[f"moe_layer_{i}"] = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", router_weights_passed_separately=self.router_weights_passed_separately, ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
 
         if share_routers:
@@ -107,6 +108,7 @@ class SharedParamsMoEModel(nn.Module):
         zipped_dicts = zip(attn_layers.items(), moe_layers.items())
         layers = OrderedDict(chain.from_iterable(zipped_dicts))
 
+        assert len(layers) == self.config.num_total_layers * 2
 
         # Define the model layers
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -127,22 +129,30 @@ class SharedParamsMoEModel(nn.Module):
         """
 
         # Get token embeddings. Note since we're using ALiBI there are no positional embeddings here
-        x = self.token_embedding(input_ids)
+        x = self.token_embedding(input_ids) # batch seq hidden
 
         for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("attn_layer"):
-                x, _attention_cache = layer(x)
+                x, _attention_cache = layer(x) # batch seq hidden
             else:
                 # For MoE layers
                 if self.routers: # If routers are defined separately
-                    router = self.routers[idx]
-                    h = router(x)
-                    x, _cache = layer(x = x, routing_weights = h)
+                    # Get the router for this layer
+                    router_idx = f'router_{int(idx.split("_")[-1])}'
+                    router = self.routers[router_idx]
+                    router.to(device)
+
+                    # Get the router weights
+                    h = router(x) # batch seq num_experts
+                    h = rearrange(h, "b s e -> (b s) e")
+
+                    # Pass the router weights to the MoE layer with x
+                    x, _cache = layer(x = x, router_weights = h) # batch seq hidden
                 else:
                     # If routers are part of the MoE layer
-                    x, _cache = layer(x)
+                    x, _cache = layer(x) # batch seq hidden
 
-        z = self.final_norm(x)
+        z = self.final_norm(x) # batch seq hidden
 
         # Unembed to get logits for each token
         out = self.unembed(z)  # batch seq vocab_size

@@ -35,41 +35,53 @@ def test_shared_params_dense_model(
 
 
     model = SharedParamsMoEModel(ffn_dim_multiplier=ffn_dim_multiplier, num_experts = num_experts, share_attention_layers=share_attention_layers, share_moe_layers=share_moe_layers, share_routers = share_routers)
-    # model.to(device)
+    model.to(device)
 
     input_str = "Hello world"
     tokens_list = tokenizer(input_str)["input_ids"]
 
-    input = repeat(
+    input_ids = repeat(
         t.tensor(tokens_list, device=device),
         "seq_len -> batch seq_len",
         batch=batch_size,
     )  # batch seq
     # input.to(device)
 
-    seq_len = input.shape[1]
+    seq_len = input_ids.shape[1]
 
     # Check that forward pass works
-    y, _cache = model(input)
+    y, _cache = model(input_ids)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
 
 
 def test_group_shared_moe_model():
     model = SharedParamsMoEModel(ffn_dim_multiplier=4, num_experts = 8, share_attention_layers=False, share_moe_layers=True, share_routers = False, group_size = 2)
-    # model.to(device)
+    model.to(device)
 
     input_str = "Hello world"
     tokens_list = tokenizer(input_str)["input_ids"]
 
-    input = repeat(
+    input_ids = repeat(
         t.tensor(tokens_list, device=device),
         "seq_len -> batch seq_len",
         batch=2,
     )  # batch seq
     # input.to(device)
 
-    seq_len = input.shape[1]
+    seq_len = input_ids.shape[1]
 
     # Check that forward pass works
-    y, _cache = model(input)
+    y, _cache = model(input_ids)
     assert (2, seq_len, model.config.vocab_size) == y.shape
+
+    # Check that gradients are propagated
+    t.sum(t.flatten(y)).backward()
+
+    for name, param in model.named_parameters():
+        if param.is_leaf:
+            first_param = param
+            break
+
+    assert first_param.grad is not None
+    assert first_param.grad.shape == first_param.shape
+    assert first_param.grad.requires_grad is False

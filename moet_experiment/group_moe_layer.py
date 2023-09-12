@@ -230,7 +230,7 @@ class GroupMoELayer(nn.Module):
 
         x = rearrange(x, "b s h -> (b s) h")
 
-        if router_weights:
+        if router_weights is not None:
             # Use the precomputed router weights if provided
             assert router_weights.shape == (
                 batch_size * seq_len, self.num_experts)

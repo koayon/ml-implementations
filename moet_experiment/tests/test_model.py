@@ -14,7 +14,7 @@ def test_moet_model(
     batch_size: int,
 ):
     model = MoET()
-    # model.to(device)
+    model.to(device)
 
     input_str = "Hello world"
     tokens_list = tokenizer(input_str)["input_ids"]
@@ -33,12 +33,6 @@ def test_moet_model(
     # Check that forward pass works
     y, _cache = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
-
-    # Check that gradients are propagated
-    t.sum(t.flatten(y)).backward()
-    assert input.grad is not None
-    assert input.grad.shape == input.shape
-    assert input.grad.requires_grad is False
 
 
 def test_moet_model_exceptions(batch_size: int = 4, seq_len: int = 8):

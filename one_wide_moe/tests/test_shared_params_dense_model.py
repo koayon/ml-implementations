@@ -8,7 +8,7 @@ from one_wide_moe.shared_params_dense_model import SharedParamsDenseModel
 
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 model = SharedParamsDenseModel()
-# model.to(device)
+model.to(device)
 
 def test_shared_params_dense_model(
     batch_size: int = 2,
