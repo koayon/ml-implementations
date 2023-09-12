@@ -134,23 +134,23 @@ class SharedParamsMoEModel(nn.Module):
         for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("attn_layer"):
                 x, _attention_cache = layer(x) # batch seq hidden
+            elif self.routers:
+                # For MoE layers, if routers are defined separately
+
+                # Get the router for this layer
+                router_idx = f'router_{int(idx.split("_")[-1])}'
+                router = self.routers[router_idx]
+                router.to(device)
+
+                # Get the router weights
+                h = router(x) # batch seq num_experts
+                h = rearrange(h, "b s e -> (b s) e")
+
+                # Pass the router weights to the MoE layer with x
+                x, _cache = layer(x = x, router_weights = h) # batch seq hidden
             else:
-                # For MoE layers
-                if self.routers: # If routers are defined separately
-                    # Get the router for this layer
-                    router_idx = f'router_{int(idx.split("_")[-1])}'
-                    router = self.routers[router_idx]
-                    router.to(device)
-
-                    # Get the router weights
-                    h = router(x) # batch seq num_experts
-                    h = rearrange(h, "b s e -> (b s) e")
-
-                    # Pass the router weights to the MoE layer with x
-                    x, _cache = layer(x = x, router_weights = h) # batch seq hidden
-                else:
-                    # If routers are part of the MoE layer
-                    x, _cache = layer(x) # batch seq hidden
+                # If routers are part of the MoE layer
+                x, _cache = layer(x) # batch seq hidden
 
         z = self.final_norm(x) # batch seq hidden
 
