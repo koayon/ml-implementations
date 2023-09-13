@@ -208,7 +208,7 @@ class MoET_hf(PreTrainedModel):
         self.lb_coef = self.model.config.lb_coef
         self.z_coef = self.model.config.z_coef
 
-    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, return_loss: bool = True, **kwargs):
+    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, return_dict: bool = True, **kwargs) -> dict["str", t.Tensor]:
         """Forward function for hf wrapped model.
 
         Parameters
@@ -228,18 +228,21 @@ class MoET_hf(PreTrainedModel):
         # Forward pass
         logits, moe_cache = self.model(input_ids, attention_mask)
 
-        if return_loss:
+        if return_dict:
             labels = input_ids[:, 1:]
             pred_logits = logits[:, :-1, :]
 
             flattened_logits = rearrange(pred_logits, "b s v -> (b s) v")
             flattened_labels = rearrange(labels, "b s -> (b s)")
 
+            # Calculate cross entropy loss
             cross_entropy_loss = F.cross_entropy(flattened_logits, flattened_labels)
 
+            # Calculate auxiliary losses
             load_balancing_aux_loss = load_balancing_aux_loss_function(moe_cache)
             router_z_loss = router_z_loss_function(moe_cache)
 
+            # Combine losses
             loss = cross_entropy_loss + self.lb_coef * load_balancing_aux_loss + self.z_coef * router_z_loss
 
             return {"loss": loss, "cross_entropy_loss": cross_entropy_loss,
@@ -248,4 +251,5 @@ class MoET_hf(PreTrainedModel):
                     "labels": labels,
                     "logits": logits,}
         else:
-            return {"logits": logits}
+            # return {"logits": logits}
+            raise NotImplementedError("return_dict=False not implemented yet")
