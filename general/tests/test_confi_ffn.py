@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from general.confi_ffn import ConfiFFN
 from general import device
+from general.confi_ffn import ConfiFFN
 
 
 @pytest.mark.parametrize("hidden_size", [8, 16])

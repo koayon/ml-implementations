@@ -32,8 +32,29 @@ def test_moet_model(
     print(input.device)
 
     # Check that forward pass works
-    y, _cache = model(input)
+    y, moe_cache = model(input)
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
+
+    # Check that backward pass works for loss
+    y.sum().backward()
+    for p in model.parameters():
+        assert p.grad is not None
+        assert p.grad.shape == p.shape
+        assert p.grad.requires_grad is False
+        break
+
+    model.zero_grad()
+
+    y, moe_cache = model(input)
+
+    # Check that backward pass works for cache
+    moe_cache.routing_weights_tensor.sum().backward()
+    for p in model.parameters():
+        assert p.grad is not None
+        assert p.grad.shape == p.shape
+        assert p.grad.requires_grad is False
+        break
+
 
 
 def test_moet_model_exceptions(batch_size: int = 4, seq_len: int = 8):
