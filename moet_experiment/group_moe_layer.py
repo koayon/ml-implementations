@@ -95,6 +95,60 @@ class Router(nn.Module):
         else:
             return clean_h # bs num_experts
 
+def get_experts(
+        num_experts: int,
+        hidden_size: int,
+        ffn_dim_multiplier: int,
+        ffn_ratio: float,
+        group_size: int,
+        dropout: float,
+    ) -> nn.ModuleList:
+        assert num_experts % group_size == 0
+
+        num_expert_groups = num_experts // group_size
+
+        if group_size > 1:
+
+            # Grouped experts
+            up_experts = [
+                nn.Linear(
+                    in_features=hidden_size,
+                    out_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+                )
+                for _ in range(num_expert_groups)
+            ]
+            down_experts = [
+                nn.Linear(
+                    in_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+                    out_features=hidden_size,
+                )
+                for _ in range(num_experts)
+            ]
+            silu = nn.SiLU()
+            expert_dropout = nn.Dropout(dropout)
+
+            experts = []
+            for expert_num in range(num_experts):
+                # group_size experts share the same up layer. Each has a unique down layer.
+                expert_group_num = expert_num // group_size
+                experts.append(
+                    nn.Sequential(
+                        up_experts[expert_group_num],
+                        silu,
+                        down_experts[expert_num],
+                        expert_dropout,
+                    )
+                )
+            experts = nn.ModuleList(experts)
+        else:
+
+            # Regular FFN experts
+            expert = SwiGLUFFN(
+                in_features=hidden_size, dropout=dropout
+            )
+            experts = nn.ModuleList([expert for _ in range(num_experts)])
+        return experts
+
 class GroupMoELayer(nn.Module):
     experts: nn.ModuleList
     up_experts: list[nn.Module]
@@ -119,7 +173,6 @@ class GroupMoELayer(nn.Module):
 
         # Either choose k or set it from the capacity factor (c)
         assert (k > 0) or (c > 0)
-        assert num_experts % group_size == 0
         assert router_str in RouterEnums._member_names_
 
         self.num_experts = num_experts
@@ -205,10 +258,9 @@ class GroupExpertLayer(nn.Module):
 
         # Either choose k or set it from the capacity factor (c)
         assert (k > 0) or (c > 0)
-        assert num_experts % group_size == 0
+
 
         self.num_experts = num_experts
-        self.num_expert_groups = num_experts // group_size
         self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
 
         self.layer_id = layer_id
@@ -217,57 +269,20 @@ class GroupExpertLayer(nn.Module):
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
 
-        if group_size > 1:
-
-            # Grouped experts
-            up_experts = [
-                nn.Linear(
-                    in_features=self.hidden_size,
-                    out_features=int(self.hidden_size *
-                                     ffn_dim_multiplier * ffn_ratio),
-                )
-                for _ in range(self.num_expert_groups)
-            ]
-            down_experts = [
-                nn.Linear(
-                    in_features=int(self.hidden_size *
-                                    ffn_dim_multiplier * ffn_ratio),
-                    out_features=self.hidden_size,
-                )
-                for _ in range(self.num_experts)
-            ]
-            silu = nn.SiLU()
-            expert_dropout = nn.Dropout(config.expert_dropout)
-
-            experts = []
-            for expert_num in range(self.num_experts):
-                # group_size experts share the same up layer. Each has a unique down layer.
-                expert_group_num = expert_num // group_size
-                experts.append(
-                    nn.Sequential(
-                        up_experts[expert_group_num],
-                        silu,
-                        down_experts[expert_num],
-                        expert_dropout,
-                    )
-                )
-            self.experts = nn.ModuleList(experts)
-        else:
-
-            # Regular FFN experts
-            expert = SwiGLUFFN(
-                in_features=self.hidden_size, dropout=config.expert_dropout
-            )
-            self.experts = nn.ModuleList(
-                [expert for _ in range(self.num_experts)])
+        self.experts = get_experts(
+            num_experts=num_experts,
+            hidden_size=self.hidden_size,
+            ffn_dim_multiplier=ffn_dim_multiplier,
+            ffn_ratio=ffn_ratio,
+            group_size=group_size,
+            dropout=config.expert_dropout,
+        )
 
         # Use the capacity factor to set k
         if c > 0:
             self.k = self.batch_size * self.seq_len * c // self.num_experts
         else:
             self.k = k
-
-        # print(layer_id, "- k: ", self.k)
 
     def forward(
         self, x: t.Tensor, routing_logits: t.Tensor, batch_size: int, seq_len: int

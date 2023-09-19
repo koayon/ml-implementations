@@ -44,7 +44,7 @@ def test_shared_params_dense_model(
 
 
 def test_group_shared_moe_model():
-    model = SharedParamsMoEModel(ffn_dim_multiplier=4, num_experts = 8, share_attention_layers=False, share_expert_layers=True, share_routers = False, group_size = 2)
+    model = SharedParamsMoEModel(ffn_dim_multiplier=4, num_experts=8, share_attention_layers=False, share_expert_layers=True, share_routers=False, group_size=2)
     model.to(device)
 
     input_str = "Hello world"
@@ -66,11 +66,12 @@ def test_group_shared_moe_model():
     # Check that gradients are propagated
     t.sum(t.flatten(y)).backward()
 
+    first_param = None
     for name, param in model.named_parameters():
         if param.is_leaf:
             first_param = param
             break
 
-    assert first_param.grad is not None
+    assert first_param is not None and first_param.grad is not None
     assert first_param.grad.shape == first_param.shape
     assert first_param.grad.requires_grad is False
