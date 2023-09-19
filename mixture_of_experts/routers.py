@@ -1,3 +1,4 @@
+import sys
 from typing import Any, Optional
 
 import torch as t
@@ -31,13 +32,13 @@ class HashRouter(nn.Module):
         self.generator = t.Generator()
 
         self.hash = self.build_random_hash()
-        self.hash.to(device)
-
+        self.hash = self.hash.to(device)
 
     def forward(self, input: Int[t.Tensor, "bs"]) -> Int[t.Tensor, "bs k"]:
         "Takes in token ids and a hashing function and returns the expert num that each token should be assigned to."
 
-        hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of bs
+        hashes = [self.hash[:, i][input]
+                  for i in range(self.k)]  # k list of bs
 
         top_k = t.stack(hashes, dim=-1)  # bs, k
         top_k_one_hot = one_hot(
@@ -59,7 +60,8 @@ class HashRouter(nn.Module):
         self.generator.manual_seed(seed)
 
         hash = t.randint(
-            high=self.num_experts, size=(self.vocab_size, self.k), generator=self.generator
+            high=self.num_experts, size=(
+                self.vocab_size, self.k), generator=self.generator
             # , device = device
         )
         return hash

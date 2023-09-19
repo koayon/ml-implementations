@@ -9,13 +9,12 @@ from moet_experiment.model import MoET
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
 
-
 @pytest.mark.parametrize("batch_size", [2, 4])
 def test_moet_model(
     batch_size: int,
 ):
     model = MoET()
-    # model.to(device)
+    model.to(device)
 
     input_str = "Hello world"
     tokens_list = tokenizer(input_str)["input_ids"]

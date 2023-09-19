@@ -204,6 +204,7 @@ class MoET_hf(PreTrainedModel):
         self.hf_config = hf_config
 
         self.model = MoET()
+        self.model.to(device)
 
         self.lb_coef = self.model.config.lb_coef
         self.z_coef = self.model.config.z_coef
@@ -226,6 +227,7 @@ class MoET_hf(PreTrainedModel):
             Output dict
         """
         # Forward pass
+        input_ids = input_ids.to(device)
         logits, moe_cache = self.model(input_ids, attention_mask)
 
         if return_dict:

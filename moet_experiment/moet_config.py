@@ -42,7 +42,7 @@ class MoETConfig:
     use_expert_choice: bool = False
 
     # Training parameters
-    max_steps: int = 4000 # 2M in TinyStories
+    max_steps: int = 4000 # 2M in TinyStories. our batch size is 32 so 62.5k batches is everything
     num_epochs: int = 1
 
     learning_rate: float = 0.001

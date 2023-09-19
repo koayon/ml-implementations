@@ -14,6 +14,7 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2Block as HFGPT2Block
 
 from alibi.attention import AlibiUnidirectionalAttention
 from alibi.transformer_block import ALiBiTransformerBlock
+from general import device
 from general.basic_ffn import FFN
 from general.norms import RMSNorm
 from gpt.cached_attention import AttentionCache
@@ -21,7 +22,7 @@ from gpt.config import GPTConfig
 from gpt.model import FullKeyValueCache, FullKeyValueCacheTensor
 from gpt.transformer_block import GPT2Block
 from mixture_of_experts.cache import MoECache
-from moet_experiment.group_moe_layer import GroupMoELayer
+from moet_experiment.group_moe_layer import GroupExpertLayer, GroupMoELayer, Router
 from one_wide_moe.one_wide_config import OneWideConfig
 
 config = OneWideConfig()
@@ -45,7 +46,7 @@ class SharedParamsMoEModel(nn.Module):
         num_experts: int = 8,
         config: OneWideConfig = config,
         share_attention_layers: bool = True,
-        share_moe_layers: bool = False,
+        share_expert_layers: bool = False,
         share_routers: bool = False,
         group_size: int = 1,
     ):
@@ -73,23 +74,23 @@ class SharedParamsMoEModel(nn.Module):
             for i in range(self.config.num_total_layers):
                 attn_layers[f"attn_layer_{i}"] = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
 
-        if share_moe_layers:
-            single_moe_layer = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer",  ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
+        if share_expert_layers:
+            single_moe_layer = GroupExpertLayer(num_experts = num_experts, layer_id = f"moe_layer",  ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
-            attn_layers = OrderedDict(
+            moe_layers = OrderedDict(
                 {
-                    f"ffn_layer_{i}": single_moe_layer
+                    f"moe_layer_{i}": single_moe_layer
                     for i in range(self.config.num_total_layers)
                 }
             )
 
         else:
             for i in range(self.config.num_total_layers):
-                moe_layers[f"ffn_layer_{i}"] = GroupMoELayer(num_experts = num_experts, layer_id = f"moe_layer_{i}",  ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
+                moe_layers[f"moe_layer_{i}"] = GroupExpertLayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
                                              )
 
         if share_routers:
-            single_router = nn.Linear(config.hidden_size, num_experts)
+            single_router = Router(num_experts = num_experts, router_str="linear", config = config)
             routers = OrderedDict(
                 {
                     f"router_{i}": single_router
@@ -97,16 +98,18 @@ class SharedParamsMoEModel(nn.Module):
                 }
             )
         else:
-            # Leave routers empty
-            pass
-
-        if (not share_moe_layers) and share_routers:
-            raise ValueError("If sharing routers, must also share MoE layers")
+            routers = OrderedDict(
+                {
+                    f"router_{i}": Router(num_experts = num_experts, router_str="linear", config = config)
+                    for i in range(self.config.num_total_layers)
+                }
+            )
 
         # Interleave the attention and ffn layers
         zipped_dicts = zip(attn_layers.items(), moe_layers.items())
         layers = OrderedDict(chain.from_iterable(zipped_dicts))
 
+        assert len(layers) == self.config.num_total_layers * 2
 
         # Define the model layers
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -126,23 +129,33 @@ class SharedParamsMoEModel(nn.Module):
         x: batch seq_length
         """
 
+        batch_size, seq_len = input_ids.shape
+
         # Get token embeddings. Note since we're using ALiBI there are no positional embeddings here
-        x = self.token_embedding(input_ids)
+        x = self.token_embedding(input_ids) # batch seq hidden
 
         for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("attn_layer"):
-                x, _attention_cache = layer(x)
+                x, _attention_cache = layer(x) # batch seq hidden
             else:
-                # For MoE layers
-                if self.routers: # If routers are defined separately
-                    router = self.routers[idx]
-                    h = router(x)
-                    x, _cache = layer(x = x, routing_logits = h)
-                else:
-                    # If routers are part of the MoE layer
-                    x, _cache = layer(x)
+                # MoE layers
 
-        z = self.final_norm(x)
+                x = rearrange(x, "b s h -> (b s) h")
+
+                # Get the router for this layer
+                router_idx = f'router_{int(idx.split("_")[-1])}'
+                router = self.routers[router_idx]
+                router.to(device)
+
+                # Get the router weights
+                h = router(x) # (bs) num_experts
+
+                # Pass the router weights to the MoE layer with x
+                x, _cache = layer(x = x, routing_logits = h, batch_size = batch_size, seq_len = seq_len) # (batch seq) hidden
+
+                x = rearrange(x, "(b s) h -> b s h", b = batch_size, s = seq_len)
+
+        z = self.final_norm(x) # batch seq hidden
 
         # Unembed to get logits for each token
         out = self.unembed(z)  # batch seq vocab_size
