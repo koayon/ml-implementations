@@ -23,7 +23,7 @@ class SoftExpertLayer(nn.Module):
         layer_id: str,
         config: MoETConfig = MoETConfig(),
         group_size: int = 1,
-        num_slots: int = 1,
+        slots_per_expert: int = 1,
         ffn_dim_multiplier: int = 4,
         ffn_ratio: float = 2 / 3,
         use_expert_choice: Optional[bool] = None,
@@ -32,7 +32,7 @@ class SoftExpertLayer(nn.Module):
 
         assert num_experts % group_size == 0
 
-        self.num_slots = num_slots
+        self.slots_per_expert = slots_per_expert
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
@@ -114,52 +114,24 @@ class SoftExpertLayer(nn.Module):
         # x = rearrange(x, "b s h -> (b s) h")
 
         assert router_weights.shape == (bs, self.num_experts)
-        h = router_weights # (b s) num_experts
+        h = router_weights # (b s) num_experts slots
 
-        S = t.softmax(h, dim=-1)  # bs num_experts
+        # Dispatch weights
+        D = t.softmax(h, dim=-1)  # bs num_experts slots
+        # Combine weights
+        C = t.softmax(h, dim = 0) # bs num_experts slots
 
-        G, chosen_token_index, P = self._soft_routing_matrices(S = S, batch_size = batch_size, seq_len = seq_len)
-
-        # Soft MoE cache
-        # layer_cache = ExpertChoiceLayerCache(
-        #         G=G,
-        #         P = P,
-        #         token_assignments=chosen_token_index,
-        #         routing_weights=h,
-        #     )
-
-
-        tokens_for_expert = einsum(
-                P.float(), x, "bs k expert, bs hidden_size -> expert k hidden_size",
-            )  # expert k hidden_size
+        # Get the weighted averaged X for each slot. This is the input to the experts
+        x_tilda = einsum(D, x, "bs num_experts slots, bs hidden_size -> num_experts slots hidden_size")
 
         # USE EXPERTS
         # forward the relevant tokens through the relevant expert
-        E_list = [self.experts[expert_num](tokens_for_expert[expert_num]) for expert_num in range(self.num_experts)]  # num_experts list[k hidden_size]
+        # E_list is denoted y_tilda in the paper
+        E_list = [self.experts[expert_num](x_tilda[expert_num]) for expert_num in range(self.num_experts)]  # num_experts list[slots hidden_size]
 
-        E = t.stack(E_list, dim=0)  # num_experts k hidden_size
+        E = t.stack(E_list, dim=0)  # num_experts slots hidden_size
 
-        # Put the results back in the right order with the permutation matrix P and weight them correctly with the routing weights G
-
-        if self.use_expert_choice:
-            # P [bs k num_experts]
-            # G [k num_experts]
-            # E [num_experts k hidden_size]
-            y = einsum(
-            P.float(), G, E, "bs k expert, k expert, expert k hidden_size -> bs hidden_size",)
-        else:
-            # P [bs k num_experts]
-            # G [bs k]
-            # E [num_experts k hidden_size]
-            y = einsum(
-             P.float(), G, E, "bs k expert, bs k, expert k hidden_size -> bs hidden_size",)
-
-        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
+        # Combine the outputs of the experts with the weights from the router to get the final output with the correct shapes
+        y = einsum(C, E, "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size")
 
         return y, None
-
-    def _soft_routing_matrices(self, S: t.Tensor, batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
-        """
-        S: bs num_experts
-        """
-        raise NotImplementedError
