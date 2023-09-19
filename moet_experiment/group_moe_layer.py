@@ -89,7 +89,6 @@ class Router(nn.Module):
         else:
             return clean_h # bs num_experts
 
-
 class GroupMoELayer(nn.Module):
     experts: nn.ModuleList
     up_experts: list[nn.Module]
@@ -101,7 +100,6 @@ class GroupMoELayer(nn.Module):
         num_experts: int,
         layer_id: str,
         router_str: str = "linear",
-        router_weights_passed_separately: bool = False,
         router: Optional[Router] = None,
         config: MoETConfig = MoETConfig(),
         group_size: int = 1,
@@ -122,8 +120,6 @@ class GroupMoELayer(nn.Module):
         self.num_expert_groups = num_experts // group_size
         self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
 
-        self.router_weights_passed_separately = router_weights_passed_separately
-
         self.layer_id = layer_id
 
         self.hidden_size = config.hidden_size
@@ -133,9 +129,6 @@ class GroupMoELayer(nn.Module):
         if router:
             # If we've passed in a router then use that
             self.router = router
-        elif self.router_weights_passed_separately:
-            # If we're passing in the router separately then we don't need to create one here
-            self.router = None
         else: # Otherwise create a new router
             self.router = Router(
                 num_experts=num_experts,
@@ -143,6 +136,78 @@ class GroupMoELayer(nn.Module):
                 config=config,
             )
 
+
+        self.expert_layer = GroupExpertLayer(num_experts = num_experts, layer_id = layer_id, config = config, group_size = group_size, k = k, c = c, ffn_dim_multiplier = ffn_dim_multiplier, ffn_ratio = ffn_ratio, use_expert_choice = use_expert_choice)
+
+    def forward(
+        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
+    ) -> Tuple[t.Tensor, MoELayerCache]:
+        """
+        For interpretability uses we want to hook and cache G (the top k softmaxed router weights - either over tokens or experts).
+        We also want the chosen token/expert indices known as the assignments.
+
+        It may also be interesting to look at S which is the same as G but the full matrix, not restricted to the top k.
+
+        Args:
+            x: batch seq hidden_size
+            router: hidden_size num_experts
+            input_tokens: batch seq, the original input tokens
+
+        Returns:
+            x: batch, seq, hidden_size
+            MoELayerCache
+            Either an ExpertChoiceLayerCache or a TokenChoiceLayerCache depending on the value of self.use_expert_choice
+            Contains:
+                G: (depends on self.use_expert_choice)
+                assignments: (depends on self.use_expert_choice)
+
+                routing_weights: (batch seq) num_experts
+                    Also called h. These are the logits used in the loss function.
+
+        """
+        batch_size, seq_len, _hidden_size = x.shape
+        x = rearrange(x, "b s h -> (b s) h")
+        router_weights = self.router(x, input_tokens)  # (b s) num_experts
+
+        y, layer_cache = self.expert_layer(x, router_weights, batch_size = batch_size, seq_len = seq_len)
+
+        return y, layer_cache
+
+
+
+class GroupExpertLayer(nn.Module):
+    experts: nn.ModuleList
+    up_experts: list[nn.Module]
+    down_experts: list[nn.Module]
+
+    def __init__(
+        self,
+        *,
+        num_experts: int,
+        layer_id: str,
+        config: MoETConfig = MoETConfig(),
+        group_size: int = 1,
+        k: int = 0,  # topk
+        c: float = 1.0,  # capacity factor
+        ffn_dim_multiplier: int = 4,
+        ffn_ratio: float = 2 / 3,
+        use_expert_choice: Optional[bool] = None,
+    ) -> None:
+        super().__init__()
+
+        # Either choose k or set it from the capacity factor (c)
+        assert (k > 0) or (c > 0)
+        assert num_experts % group_size == 0
+
+        self.num_experts = num_experts
+        self.num_expert_groups = num_experts // group_size
+        self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
+
+        self.layer_id = layer_id
+
+        self.hidden_size = config.hidden_size
+        self.batch_size = config.batch_size
+        self.seq_len = config.max_position_embeddings
 
         if group_size > 1:
 
@@ -194,7 +259,7 @@ class GroupMoELayer(nn.Module):
         # print(layer_id, "- k: ", self.k)
 
     def forward(
-        self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None, router_weights: Optional[t.Tensor] = None
+        self, x: t.Tensor, router_weights: t.Tensor, batch_size: int, seq_len: int
     ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         For interpretability uses we want to hook and cache G (the top k softmaxed router weights - either over tokens or experts).
@@ -220,19 +285,12 @@ class GroupMoELayer(nn.Module):
 
         """
 
-        batch_size, seq_len, _hidden_size = x.shape
+        bs, _hidden_size = x.shape
 
-        x = rearrange(x, "b s h -> (b s) h")
+        # x = rearrange(x, "b s h -> (b s) h")
 
-        if router_weights:
-            # Use the precomputed router weights if provided
-            assert router_weights.shape == (batch_size * seq_len, self.num_experts)
-
-            h = router_weights
-        else:
-            # Get routing weights, h
-            assert self.router
-            h = self.router(x, input_tokens)  # (b s) num_experts
+        assert router_weights.shape == (bs, self.num_experts)
+        h = router_weights # (b s) num_experts
 
         S = t.softmax(h, dim=-1)  # bs num_experts
 
@@ -302,14 +360,17 @@ class GroupMoELayer(nn.Module):
             G, chosen_token_index, P
         """
 
+
+        bs, _num_experts = S.shape
+
         # If there aren't enough tokens in the input to select top k, reduce k
-        self.k = min(int(self.k), (batch_size * seq_len))
+        self.k = min(int(self.k), bs)
 
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         # Select top-k expert, with one-hot vector. P is the permutation matrix
         P: t.Tensor = F.one_hot(
-            chosen_token_index, num_classes=batch_size * seq_len
+            chosen_token_index, num_classes=bs
         )  # k num_experts bs (one-hot)
 
         P = rearrange(P, "k num_experts bs -> bs k num_experts").float()  # bs k num_experts

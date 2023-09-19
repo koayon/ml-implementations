@@ -2,7 +2,7 @@ import pytest
 import torch as t
 
 from general import device
-from moet_experiment.group_moe_layer import GroupMoELayer
+from moet_experiment.group_moe_layer import GroupExpertLayer, GroupMoELayer
 from moet_experiment.moet_config import MoETConfig
 
 config = MoETConfig()
@@ -98,6 +98,6 @@ def test_get_first_drop_point():
     P[3,0,1] = 0
 
     k = 1
-    drop_points = GroupMoELayer._get_first_drop_point(P = P, k = k)
+    drop_points = GroupExpertLayer._get_first_drop_point(P = P, k = k)
 
     assert (drop_points == t.tensor([0, 2, -1, -1])).all()
