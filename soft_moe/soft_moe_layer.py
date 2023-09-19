@@ -7,7 +7,7 @@ from torch import nn
 from general import device
 from general.norms import RMSNorm
 from general.swiglu_ffn import SwiGLUFFN
-from mixture_of_experts.cache import MoECache, MoELayerCache
+from mixture_of_experts.cache import MoECache, MoELayerCache, SoftTokenMergeLayerCache
 from moet_experiment.moet_config import MoETConfig
 
 
@@ -86,10 +86,10 @@ class SoftExpertLayer(nn.Module):
             self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
 
     def forward(
-        self, x: t.Tensor, router_weights: t.Tensor, batch_size: int, seq_len: int
+        self, x: t.Tensor, routing_logits: t.Tensor, batch_size: int, seq_len: int
     ) -> Tuple[t.Tensor, MoELayerCache]:
         """
-        Soft MoE as given in
+        Soft MoE as given in From Sparse to Soft Mixtures of Experts
 
         Args:
             x: batch seq hidden_size
@@ -113,13 +113,15 @@ class SoftExpertLayer(nn.Module):
 
         # x = rearrange(x, "b s h -> (b s) h")
 
-        assert router_weights.shape == (bs, self.num_experts)
-        h = router_weights # (b s) num_experts slots
+        assert routing_logits.shape == (bs, self.num_experts, self.slots_per_expert)
+        # Routing logits are called phi in the paper # (b s) num_experts slots
 
         # Dispatch weights
-        D = t.softmax(h, dim=-1)  # bs num_experts slots
+        D = t.softmax(routing_logits, dim=-1)  # bs num_experts slots
         # Combine weights
-        C = t.softmax(h, dim = 0) # bs num_experts slots
+        C = t.softmax(routing_logits, dim = 0) # bs num_experts slots
+
+        layer_cache = SoftTokenMergeLayerCache(D = D, C = C, routing_logits= routing_logits)
 
         # Get the weighted averaged X for each slot. This is the input to the experts
         x_tilda = einsum(D, x, "bs num_experts slots, bs hidden_size -> num_experts slots hidden_size")
@@ -134,4 +136,4 @@ class SoftExpertLayer(nn.Module):
         # Combine the outputs of the experts with the weights from the router to get the final output with the correct shapes
         y = einsum(C, E, "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size")
 
-        return y, None
+        return y, layer_cache

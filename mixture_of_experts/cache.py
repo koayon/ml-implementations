@@ -60,6 +60,32 @@ class TokenChoiceLayerCache():
         self.P = self.P.detach()
         self.routing_logits = self.routing_logits.detach()
 
+@dataclass
+class SoftTokenMergeLayerCache():
+    """
+    G: softmaxed routing weights for the top k experts
+        [batch_seq k]
+    token_assignments: the top k expert ids
+        [batch_seq k]
+
+    P: one-hot vector of the expert assignments
+        [bs k num_experts]
+    routing_logits: raw outputs of the routing model (before softmax)
+        [batch_seq num_experts]
+    """
+
+    D: Float[t.Tensor, "batch_seq num_experts slots"]
+    C: Int[t.Tensor, "batch_seq num_experts slots"]
+
+    routing_logits: Float[t.Tensor, "batch_seq num_experts slots"]
+
+    def detach(self) -> None:
+        self.D = self.D.detach()
+        self.C = self.C.detach()
+
+        self.routing_logits = self.routing_logits.detach()
+
+
 
 
 def pad_with_negs(tensor: t.Tensor) -> t.Tensor:
