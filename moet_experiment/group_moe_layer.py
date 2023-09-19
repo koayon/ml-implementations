@@ -303,7 +303,7 @@ class GroupExpertLayer(nn.Module):
                     G=G,
                     P = P,
                     token_assignments=chosen_token_index,
-                    routing_weights=h,
+                    routing_logits=h,
                 )
 
         else:
@@ -313,7 +313,7 @@ class GroupExpertLayer(nn.Module):
                 G=G,
                 P=P,
                 expert_assignments=chosen_expert_index,
-                routing_weights=h,
+                routing_logits=h,
             )
 
 

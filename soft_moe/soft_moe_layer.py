@@ -104,14 +104,12 @@ class SoftExpertLayer(nn.Module):
                 G: (depends on self.use_expert_choice)
                 assignments: (depends on self.use_expert_choice)
 
-                routing_weights: (batch seq) num_experts
+                routing_logits: (batch seq) num_experts
                     Also called h. These are the logits used in the loss function.
 
         """
 
         bs, _hidden_size = x.shape
-
-        # x = rearrange(x, "b s h -> (b s) h")
 
         assert routing_logits.shape == (bs, self.num_experts, self.slots_per_expert)
         # Routing logits are called phi in the paper # (b s) num_experts slots
@@ -137,3 +135,5 @@ class SoftExpertLayer(nn.Module):
         y = einsum(C, E, "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size")
 
         return y, layer_cache
+
+    # TODO: Add tests

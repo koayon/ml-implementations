@@ -137,7 +137,7 @@ class SharedParamsMoEModel(nn.Module):
                 if self.routers: # If routers are defined separately
                     router = self.routers[idx]
                     h = router(x)
-                    x, _cache = layer(x = x, routing_weights = h)
+                    x, _cache = layer(x = x, routing_logits = h)
                 else:
                     # If routers are part of the MoE layer
                     x, _cache = layer(x)

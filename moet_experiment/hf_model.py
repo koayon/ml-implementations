@@ -33,7 +33,7 @@ def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tenso
     total_tokens_per_expert = reduce(moe_cache.P, "layer expert batch_seq k -> layer expert", "sum")  # [layer, expert]
     frac_tokens_per_expert = total_tokens_per_expert / num_tokens
 
-    routing_probs = F.softmax(moe_cache.routing_weights_tensor, dim=-1)  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(moe_cache.routing_logits_tensor, dim=-1)  # [layer, num_experts, batch_seq]
 
     total_router_prob_per_expert = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
     frac_router_prob_per_expert = total_router_prob_per_expert / num_tokens
@@ -60,7 +60,7 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         Router z loss
     """
-    router_logits = moe_cache.routing_weights_tensor # [layer, num_experts, batch_seq]
+    router_logits = moe_cache.routing_logits_tensor # [layer, num_experts, batch_seq]
 
     lse_logits = t.logsumexp(router_logits, dim=-1)  # [layer, num_experts]
     squared_lse_logits = lse_logits ** 2
@@ -85,8 +85,8 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         _description_
     """
-    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
-    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
 
     expert_importance = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
     flat_expert_importance = rearrange(expert_importance, "layer num_experts -> (layer num_experts)")
@@ -115,8 +115,8 @@ def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         _description_
     """
-    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
-    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
     flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
 
     # Calculate the entropy, denoted h in the paper
@@ -147,8 +147,8 @@ def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         _description_
     """
-    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
-    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
     flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
 
     global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]
@@ -172,8 +172,8 @@ def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         _description_
     """
-    routing_weights = moe_cache.routing_weights_tensor  # [layer, num_experts, batch_seq]
-    routing_probs = F.softmax(routing_weights, dim=2)  # [layer, num_experts, batch_seq]
+    routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
     flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
 
     global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]

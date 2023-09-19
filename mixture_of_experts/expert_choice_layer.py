@@ -103,7 +103,7 @@ class ExpertChoiceFFN(nn.Module):
 
         Returns:
             x: batch, seq, hidden_size
-            cache: MoELayerCache: G, token_assignments, routing_weights
+            cache: MoELayerCache: G, token_assignments, routing_logits
         """
 
         batch_dim, seq_length, _hidden_size = x.shape
@@ -128,7 +128,8 @@ class ExpertChoiceFFN(nn.Module):
         layer_cache = ExpertChoiceLayerCache(
             G=G,
             token_assignments=chosen_token_index,
-            routing_weights=h,
+            routing_logits=h,
+            # P = P
         )
 
         # Collect expert results from parallelised expert forward

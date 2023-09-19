@@ -48,7 +48,7 @@ def test_moet_model(
     y, moe_cache = model(input)
 
     # Check that backward pass works for cache
-    moe_cache.routing_weights_tensor.sum().backward()
+    moe_cache.routing_logits_tensor.sum().backward()
     for p in model.parameters():
         assert p.grad is not None
         assert p.grad.shape == p.shape

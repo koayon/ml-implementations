@@ -144,9 +144,7 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         """
         outputs, _labels = eval_pred
 
-        loss = outputs[0]
-        logits = outputs[-1]
-        labels = outputs[-2]
+        loss, _logits, _ = outputs
 
 
         # Perplexity
@@ -243,8 +241,8 @@ def train_model(trainer: Trainer, config: MoETConfig, model: nn.Module, runs_df:
             trainer.train()
             wandb.alert(title="Training complete", text="Training complete")
         except Exception as e:
-            raise e
             wandb.alert(title="Training failed", text="Training failed")
+            raise e
 
         checkpoint_path = f"checkpoints/{config.model_name}_{EXPERIMENT_NAME}_{run.id}"
 

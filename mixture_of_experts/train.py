@@ -188,7 +188,7 @@ class Trainer:
         logits, MoE_cache = model(inputs)
 
         # Extract the router logits from the cache and use for router z-loss
-        router_logits = MoE_cache.routing_weights_tensor  # layer, bs, num_experts
+        router_logits = MoE_cache.routing_logits_tensor  # layer, bs, num_experts
 
         router_logits = rearrange(
             router_logits, "l (b s) e -> b s (l e)", b=self.config.batch_size
