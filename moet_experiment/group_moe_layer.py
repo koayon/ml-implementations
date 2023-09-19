@@ -169,7 +169,9 @@ class GroupMoELayer(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         router_weights = self.router(x, input_tokens)  # (b s) num_experts
 
-        y, layer_cache = self.expert_layer(x, router_weights, batch_size = batch_size, seq_len = seq_len)
+        y, layer_cache = self.expert_layer(x, router_weights, batch_size = batch_size, seq_len = seq_len) # (b s) hidden_size
+
+        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size) # batch seq hidden_size
 
         return y, layer_cache
 
@@ -340,11 +342,7 @@ class GroupExpertLayer(nn.Module):
             y = einsum(
             "bs k expert, bs k, expert k hidden_size -> bs hidden_size", P.float(), G, E)
 
-        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size)
-
         return y, layer_cache
-
-    # TODO: Decouple MoE layer from Router
 
     def _expert_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
