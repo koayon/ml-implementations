@@ -8,6 +8,7 @@ from general import device
 from general.norms import RMSNorm
 from general.swiglu_ffn import SwiGLUFFN
 from mixture_of_experts.cache import MoECache, MoELayerCache, SoftTokenMergeLayerCache
+from moet_experiment.group_moe_layer import get_experts
 from moet_experiment.moet_config import MoETConfig
 
 
@@ -30,12 +31,10 @@ class SoftExpertLayer(nn.Module):
     ) -> None:
         super().__init__()
 
-        assert num_experts % group_size == 0
 
         self.slots_per_expert = slots_per_expert
 
         self.num_experts = num_experts
-        self.num_expert_groups = num_experts // group_size
         self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
 
         self.layer_id = layer_id
@@ -44,46 +43,16 @@ class SoftExpertLayer(nn.Module):
         self.batch_size = config.batch_size
         self.seq_len = config.max_position_embeddings
 
-        if group_size > 1:
+        self.experts = get_experts(
+            num_experts=num_experts,
+            hidden_size=self.hidden_size,
+            ffn_dim_multiplier=ffn_dim_multiplier,
+            ffn_ratio=ffn_ratio,
+            group_size=group_size,
+            dropout=config.expert_dropout,
+        )
 
-            # Grouped experts
-            up_experts = [
-                nn.Linear(
-                    in_features=self.hidden_size,
-                    out_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
-                )
-                for _ in range(self.num_expert_groups)
-            ]
-            down_experts = [
-                nn.Linear(
-                    in_features=int(self.hidden_size * ffn_dim_multiplier * ffn_ratio),
-                    out_features=self.hidden_size,
-                )
-                for _ in range(self.num_experts)
-            ]
-            silu = nn.SiLU()
-            expert_dropout = nn.Dropout(config.expert_dropout)
 
-            experts = []
-            for expert_num in range(self.num_experts):
-                # group_size experts share the same up layer. Each has a unique down layer.
-                expert_group_num = expert_num // group_size
-                experts.append(
-                    nn.Sequential(
-                        up_experts[expert_group_num],
-                        silu,
-                        down_experts[expert_num],
-                        expert_dropout,
-                    )
-                )
-            self.experts = nn.ModuleList(experts)
-        else:
-
-            # Regular FFN experts
-            expert = SwiGLUFFN(
-                in_features=self.hidden_size, dropout=config.expert_dropout
-            )
-            self.experts = nn.ModuleList([expert for _ in range(self.num_experts)])
 
     def forward(
         self, x: t.Tensor, routing_logits: t.Tensor, batch_size: int, seq_len: int
