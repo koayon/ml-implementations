@@ -27,7 +27,6 @@ class SoftExpertLayer(nn.Module):
         slots_per_expert: int = 1,
         ffn_dim_multiplier: int = 4,
         ffn_ratio: float = 2 / 3,
-        use_expert_choice: Optional[bool] = None,
     ) -> None:
         super().__init__()
 
@@ -35,7 +34,6 @@ class SoftExpertLayer(nn.Module):
         self.slots_per_expert = slots_per_expert
 
         self.num_experts = num_experts
-        self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
 
         self.layer_id = layer_id
 
@@ -55,26 +53,26 @@ class SoftExpertLayer(nn.Module):
 
 
     def forward(
-        self, x: t.Tensor, routing_logits: t.Tensor, batch_size: int, seq_len: int
+        self, x: t.Tensor, routing_logits: t.Tensor
     ) -> Tuple[t.Tensor, MoELayerCache]:
         """
         Soft MoE as given in From Sparse to Soft Mixtures of Experts
 
         Args:
-            x: batch seq hidden_size
+            x: batch_seq hidden_size
             router: hidden_size num_experts
-            input_tokens: batch seq, the original input tokens
+            routing_logits: batch_seq num_experts slots
 
         Returns:
-            x: batch, seq, hidden_size
+            x: batch_seq, hidden_size
             MoELayerCache
             Either an ExpertChoiceLayerCache or a TokenChoiceLayerCache depending on the value of self.use_expert_choice
             Contains:
                 G: (depends on self.use_expert_choice)
                 assignments: (depends on self.use_expert_choice)
 
-                routing_logits: (batch seq) num_experts
-                    Also called h. These are the logits used in the loss function.
+                routing_logits: batch_seq num_experts slots
+                    Also called phi. These are the logits used in the loss function.
 
         """
 
@@ -104,5 +102,3 @@ class SoftExpertLayer(nn.Module):
         y = einsum(C, E, "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size")
 
         return y, layer_cache
-
-    # TODO: Add tests

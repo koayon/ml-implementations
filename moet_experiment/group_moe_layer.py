@@ -294,12 +294,12 @@ class GroupExpertLayer(nn.Module):
         It may also be interesting to look at S which is the same as G but the full matrix, not restricted to the top k.
 
         Args:
-            x: batch seq hidden_size
+            x: batch_seq hidden_size
             router: hidden_size num_experts
             input_tokens: batch seq, the original input tokens
 
         Returns:
-            x: batch, seq, hidden_size
+            x: batch_seq, hidden_size
             MoELayerCache
             Either an ExpertChoiceLayerCache or a TokenChoiceLayerCache depending on the value of self.use_expert_choice
             Contains:

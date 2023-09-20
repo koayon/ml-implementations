@@ -43,7 +43,7 @@ def test_shared_params_dense_model(
     assert (batch_size, seq_len, model.config.vocab_size) == y.shape
 
 
-def test_group_shared_moe_model():
+def test_group_shared_moe_model(batch_size: int = 2):
     model = SharedParamsMoEModel(ffn_dim_multiplier=4, num_experts=8, share_attention_layers=False, share_expert_layers=True, share_routers=False, group_size=2)
     model.to(device)
 
@@ -53,7 +53,7 @@ def test_group_shared_moe_model():
     input_ids = repeat(
         t.tensor(tokens_list, device=device),
         "seq_len -> batch seq_len",
-        batch=2,
+        batch=batch_size,
     )  # batch seq
     # input.to(device)
 
@@ -61,7 +61,7 @@ def test_group_shared_moe_model():
 
     # Check that forward pass works
     y, _cache = model(input_ids)
-    assert (2, seq_len, model.config.vocab_size) == y.shape
+    assert (batch_size, seq_len, model.config.vocab_size) == y.shape
 
     # Check that gradients are propagated
     t.sum(t.flatten(y)).backward()
