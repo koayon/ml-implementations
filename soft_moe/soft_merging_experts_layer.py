@@ -72,36 +72,45 @@ class SoftMergingExpertLayer(nn.Module):
 
 
     def forward(
-        self, x: t.Tensor, routing_logits: t.Tensor
-    ) -> Tuple[t.Tensor, SMEARLayerCache]:
+        self, x: t.Tensor, routing_logits: Optional[t.Tensor] = None, merged_expert: Optional[nn.Module] = None
+    ) -> Tuple[t.Tensor, Optional[SMEARLayerCache], nn.Module]:
         """
-        Soft MoE as given in From Sparse to Soft Mixtures of Experts
+        Soft MoE as given in From Sparse to Soft Mixtures of Experts.
+
+        Given some experts and routing logits we merge the experts with a weighted average and then forward the input through the merged expert.
+
+        This approach requires less FLOPs/GPUs than an ensemble since we only have to forward one rather than N experts.
+        However, the averaging operation takes some FLOPs in itself meaning that it's generally not faster than an ensemble overall unless we use the same expert for multiple tokens in a sequence (and/or over multiple batches). This is potentially okay in a Chat scenario where we can get the routing weights based on the prompt and then use the same expert for all tokens in the response. Overall this would seem to be a weakness of the approach however.
 
         Args:
             x: batch_seq hidden_size
-            router: hidden_size num_experts
-            routing_logits: batch_seq num_experts slots
+            routing_logits: hidden_size num_experts
+            merged_expert: batch_seq num_experts slots
 
         Returns:
             x: batch_seq, hidden_size
-            SMEARLayerCache
+            layer_cache: SMEARLayerCache
+            merged_expert: nn.Module
         """
 
         bs, _hidden_size = x.shape
+        if merged_expert is None:
+            assert routing_logits is not None
+            assert routing_logits.shape == (bs, self.num_experts)
+            # Routing logits are called phi in the paper # (b s) num_experts
 
-        assert routing_logits.shape == (bs, self.num_experts)
-        # Routing logits are called phi in the paper # (b s) num_experts
+            # Define the routing matrix, h
+            routing_matrix = t.softmax(routing_logits, dim=-1)  # bs num_experts
 
-        # Define the routing matrix, h
-        routing_matrix = t.softmax(routing_logits, dim=-1)  # bs num_experts
+            layer_cache = SMEARLayerCache(routing_matrix=routing_matrix, routing_logits=routing_logits)
 
-        layer_cache = SMEARLayerCache(routing_matrix=routing_matrix, routing_logits=routing_logits)
-
-        # Define merged (smeared) expert module
-        merged_expert = self.experts.merge_weights_and_biases(routing_matrix)
+            # Define merged (smeared) expert module
+            merged_expert = self.experts.merge_weights_and_biases(routing_matrix)
+        else:
+            layer_cache = None
 
         # USE EXPERT
         # forward the relevant tokens through the merged expert
         y = merged_expert(x)
 
-        return y, layer_cache
+        return y, layer_cache, merged_expert
