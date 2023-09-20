@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Optional, Tuple, Union
@@ -27,7 +28,6 @@ class RouterEnums(Enum):
     linear = auto()
     learned = auto()
     hash = auto()
-    router_weights_passed_separately = auto()
 
 
 device = "cuda" if t.cuda.is_available() else "cpu"
@@ -55,9 +55,6 @@ class Router(nn.Module):
             self.hash_router = HashRouter(
                 config=config, num_experts=config.num_experts_hash)
             # self.hash_router.build_random_hash()
-        elif self.router_enum == RouterEnums.router_weights_passed_separately:
-            # Router will be passed in separately
-            pass
         else:
             raise ValueError(
                 f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
@@ -95,6 +92,118 @@ class Router(nn.Module):
         else:
             return clean_h # bs num_experts
 
+class Expert(nn.Module):
+    """Regular FFN expert with up and down projections.
+
+        Parameters
+        ----------
+        up_expert : nn.Linear
+            _description_
+        down_expert : nn.Linear
+            _description_
+        act_fn : nn.Module
+            _description_
+        dropout : nn.Module
+            _description_
+    """
+
+    def __init__(self, up_expert: nn.Linear, down_expert: nn.Linear, act_fn: nn.Module, dropout: float):
+        super().__init__()
+        self.up_expert_weight: t.Tensor = up_expert.weight
+        self.up_expert_bias: t.Tensor = up_expert.bias
+        self.down_expert_weight: t.Tensor = down_expert.weight
+        self.down_expert_bias: t.Tensor = down_expert.bias
+        self.dropout = dropout
+        self.act_fn = act_fn
+
+        self.expert = nn.Sequential(
+                        OrderedDict(
+                            [
+                                ("up_expert", up_expert),
+                                ("act_fn", act_fn),
+                                ("down_expert", down_expert),
+                                ("expert_dropout", nn.Dropout(dropout)),
+                            ]
+                        )
+                    )
+
+    def forward(self, x: t.Tensor):
+        return self.expert(x)
+
+
+
+class ExpertList(nn.ModuleList):
+    def __init__(self, experts: list[Expert]):
+        super().__init__(experts)
+        self.experts = experts
+
+    @property
+    def up_expert_weights(self) -> t.Tensor:
+        """
+        Returns
+        -------
+        t.Tensor
+            num_experts, dim, up_dim
+        """
+        expert_weights = t.stack([expert.up_expert_weight for expert in self.experts], dim = 0) # num_experts dim up_dim
+        return expert_weights
+
+    @property
+    def up_expert_biases(self) -> t.Tensor:
+        """
+        Returns
+        -------
+        t.Tensor
+            num_experts, up_dim
+        """
+        expert_biases = t.stack([expert.up_expert_bias for expert in self.experts], dim = 0) # num_experts up_dim
+        return expert_biases
+
+    @property
+    def down_expert_weights(self) -> t.Tensor:
+        """
+        Returns
+        -------
+        t.Tensor
+            num_experts, up_dim, dim
+        """
+        expert_weights = t.stack([expert.down_expert_weight for expert in self.experts], dim = 0)
+        return expert_weights
+
+    @property
+    def down_expert_biases(self) -> t.Tensor:
+        """
+        Returns
+        -------
+        t.Tensor
+            num_experts, dim
+        """
+        expert_biases = t.stack([expert.down_expert_bias for expert in self.experts], dim = 0)
+        return expert_biases
+
+    def merge_weights_and_biases(self, merging_weights: Float[t.Tensor, "num_experts"]) -> Expert:
+        # Merge weights and biases
+        new_up_weights = einsum("num_experts dim up_dim, num_experts -> dim up_dim", self.up_expert_weights, merging_weights) # dim up_dim
+        new_up_biases = einsum("num_experts up_dim, num_experts -> up_dim", self.up_expert_biases, merging_weights)
+        new_down_weights = einsum("num_experts up_dim dim, num_experts -> up_dim dim", self.down_expert_weights, merging_weights)
+        new_down_biases = einsum("num_experts dim, num_experts -> dim", self.down_expert_biases, merging_weights)
+
+        dim, up_dim = new_up_weights.shape
+        # Create linear layers
+        new_up_expert = nn.Linear(in_features = dim, out_features =up_dim, bias = True)
+        new_up_expert.weight = nn.Parameter(new_up_weights)
+        new_up_expert.bias = nn.Parameter(new_up_biases)
+
+        new_down_expert = nn.Linear(in_features = up_dim, out_features = dim, bias = True)
+        new_down_expert.weight = nn.Parameter(new_down_weights)
+        new_down_expert.bias = nn.Parameter(new_down_biases)
+
+        # Assemble expert
+        new_expert = Expert(up_expert = new_up_expert, down_expert = new_down_expert, act_fn = self.experts[0].act_fn, dropout = self.experts[0].dropout)
+
+        return new_expert
+
+
 def get_experts(
         num_experts: int,
         hidden_size: int,
@@ -102,57 +211,55 @@ def get_experts(
         ffn_ratio: float,
         group_size: int,
         dropout: float,
-    ) -> nn.ModuleList:
+    ) -> ExpertList:
+        """
+        Create a list of expert modules based on the given parameters. The experts in the same group share the same down layer.
+
+        Args:
+            num_experts (int): The total number of experts to create.
+            hidden_size (int): The size of the input and output features of the experts.
+            ffn_dim_multiplier (int): The multiplier for the intermediate dimension of the experts' feed-forward network.
+            ffn_ratio (float): The ratio of the intermediate dimension to the hidden size of the experts' feed-forward network.
+            group_size (int): The number of experts that share the same down layer.
+            dropout (float): The dropout probability for the experts.
+
+        Returns:
+            experts (nn.ModuleList): A list of expert modules that can be used for further computations.
+        """
         assert num_experts % group_size == 0
 
         num_expert_groups = num_experts // group_size
 
-        if group_size > 1:
-
-            # Grouped experts
-            up_experts = [
-                nn.Linear(
-                    in_features=hidden_size,
-                    out_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
-                )
-                for _ in range(num_expert_groups)
-            ]
-            down_experts = [
-                nn.Linear(
-                    in_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
-                    out_features=hidden_size,
-                )
-                for _ in range(num_experts)
-            ]
-            silu = nn.SiLU()
-            expert_dropout = nn.Dropout(dropout)
-
-            experts = []
-            for expert_num in range(num_experts):
-                # group_size experts share the same up layer. Each has a unique down layer.
-                expert_group_num = expert_num // group_size
-                experts.append(
-                    nn.Sequential(
-                        up_experts[expert_group_num],
-                        silu,
-                        down_experts[expert_num],
-                        expert_dropout,
-                    )
-                )
-            experts = nn.ModuleList(experts)
-        else:
-
-            # Regular FFN experts
-            expert = SwiGLUFFN(
-                in_features=hidden_size, dropout=dropout
+        # Grouped experts
+        up_experts = [
+            nn.Linear(
+                in_features=hidden_size,
+                out_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
             )
-            experts = nn.ModuleList([expert for _ in range(num_experts)])
+            for _ in range(num_experts)
+        ]
+        down_experts = [
+            nn.Linear(
+                in_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+                out_features=hidden_size,
+            )
+            for _ in range(num_expert_groups)
+        ]
+
+        experts = []
+        for expert_num in range(num_experts):
+            # group_size experts share the same up layer. Each has a unique down layer.
+            expert_group_num = expert_num // group_size
+            experts.append(
+                Expert(up_expert = up_experts[expert_num], down_expert = down_experts[expert_group_num], act_fn = nn.SiLU(), dropout = dropout)
+            )
+
+        experts = ExpertList(experts)
+
         return experts
 
 class GroupMoELayer(nn.Module):
     experts: nn.ModuleList
-    up_experts: list[nn.Module]
-    down_experts: list[nn.Module]
 
     def __init__(
         self,
