@@ -85,7 +85,20 @@ class SoftTokenMergeLayerCache():
 
         self.routing_logits = self.routing_logits.detach()
 
+@dataclass
+class SMEARLayerCache():
+    """
+    routing_logits: raw outputs of the routing model (before softmax)
+        [batch_seq num_experts]
+    routing_matrix: softmaxed routing logits
+    """
 
+    routing_logits: Float[t.Tensor, "batch_seq num_experts"]
+    routing_matrix: Float[t.Tensor, "batch_seq num_experts"]
+
+    def detach(self) -> None:
+        self.routing_logits = self.routing_logits.detach()
+        self.routing_matrix = self.routing_matrix.detach()
 
 
 def pad_with_negs(tensor: t.Tensor) -> t.Tensor:
@@ -292,5 +305,5 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
                 cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")
 
 
-MoELayerCache = Union[ExpertChoiceLayerCache, TokenChoiceLayerCache, SoftTokenMergeLayerCache]
+MoELayerCache = Union[ExpertChoiceLayerCache, TokenChoiceLayerCache, SoftTokenMergeLayerCache, SMEARLayerCache]
 MoECache = Union[ExpertChoiceFullCache, TokenChoiceFullCache]
