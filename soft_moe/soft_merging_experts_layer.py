@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch as t
 from einops import einsum, rearrange, repeat
@@ -8,7 +8,8 @@ from general import device
 from general.norms import RMSNorm
 from general.swiglu_ffn import SwiGLUFFN
 from mixture_of_experts.cache import MoECache, MoELayerCache, SMEARLayerCache
-from moet_experiment.group_moe_layer import ExpertList, get_experts
+from mixture_of_experts.experts import Expert, ExpertFromWeights, ExpertList
+from moet_experiment.group_moe_layer import get_experts
 from moet_experiment.moet_config import MoETConfig
 
 
@@ -25,6 +26,7 @@ class SoftMergingExpertLayer(nn.Module):
         k: int = 1,
         ffn_dim_multiplier: int = 4,
         ffn_ratio: float = 2 / 3,
+        act_fn: nn.Module = nn.SiLU(),
     ) -> None:
         """Soft Merging of Experts Layer inspired by Soft Merging of Experts with Adaptive Routing Paper
 
@@ -68,12 +70,15 @@ class SoftMergingExpertLayer(nn.Module):
             ffn_ratio=ffn_ratio,
             group_size=group_size,
             dropout=config.expert_dropout,
+            act_fn=act_fn,
         )
+        self.act_fn = act_fn
+        self.dropout = config.expert_dropout
 
 
     def forward(
-        self, x: t.Tensor, routing_logits: Optional[t.Tensor] = None, merged_expert: Optional[nn.Module] = None
-    ) -> Tuple[t.Tensor, Optional[SMEARLayerCache], nn.Module]:
+        self, x: t.Tensor, routing_logits: Optional[t.Tensor] = None, merged_expert: Optional[Union[Expert, ExpertFromWeights]] = None
+    ) -> Tuple[t.Tensor, Optional[SMEARLayerCache], Union[Expert, ExpertFromWeights]]:
         """
         Soft MoE as given in From Sparse to Soft Mixtures of Experts.
 
@@ -104,8 +109,9 @@ class SoftMergingExpertLayer(nn.Module):
 
             layer_cache = SMEARLayerCache(routing_matrix=routing_matrix, routing_logits=routing_logits)
 
-            # Define merged (smeared) expert module
-            merged_expert = self.experts.merge_weights_and_biases(routing_matrix)
+            # Define merged (smeared) expert module (considering final token)
+            merged_expert_weights = self.experts.merge_weights_and_biases(merging_weights = routing_matrix[-1])
+            merged_expert = ExpertFromWeights(expert_linear_params=merged_expert_weights, act_fn=self.act_fn, dropout=self.dropout)
         else:
             layer_cache = None
 

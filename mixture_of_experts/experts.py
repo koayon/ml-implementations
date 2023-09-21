@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum, auto
+from turtle import up
 from typing import Any, Optional, Tuple, Union
 
 import torch as t
@@ -59,7 +60,46 @@ class Expert(nn.Module):
     def forward(self, x: t.Tensor):
         return self.expert(x)
 
+@dataclass
+class ExpertLinearParams:
+    up_expert_weight: t.Tensor
+    up_expert_bias: t.Tensor
+    down_expert_weight: t.Tensor
+    down_expert_bias: t.Tensor
 
+class ExpertFromWeights(nn.Module):
+    """Expert with up and down projections, created from weights and biases.
+
+        Parameters
+        ----------
+        up_expert_weight : t.Tensor
+            _description_
+        up_expert_bias : t.Tensor
+            _description_
+        down_expert_weight : t.Tensor
+            _description_
+        down_expert_bias : t.Tensor
+            _description_
+        act_fn : nn.Module
+            _description_
+        dropout : nn.Module
+            _description_
+    """
+    def __init__(self, expert_linear_params: ExpertLinearParams, act_fn: nn.Module, dropout: float):
+        super().__init__()
+        self.up_expert_weight = expert_linear_params.up_expert_weight
+        self.up_expert_bias = expert_linear_params.up_expert_bias
+        self.down_expert_weight = expert_linear_params.down_expert_weight
+        self.down_expert_bias = expert_linear_params.down_expert_bias
+        self.dropout = dropout
+        self.act_fn = act_fn
+
+    def forward(self, x: t.Tensor):
+        x = F.linear(x, weight = self.up_expert_weight.T, bias = self.up_expert_bias)
+        x = self.act_fn(x)
+        x = F.linear(x, weight = self.down_expert_weight.T, bias = self.down_expert_bias)
+        x = F.dropout(x, p = self.dropout)
+        return x
 
 class ExpertList(nn.ModuleList):
     def __init__(self, experts: list[Expert]):
@@ -110,8 +150,8 @@ class ExpertList(nn.ModuleList):
         expert_biases = t.stack([expert.down_expert_bias for expert in self.experts], dim = 0)
         return expert_biases
 
-    def merge_weights_and_biases(self, merging_weights: Float[t.Tensor, "num_experts"]) -> Expert:
-        """_summary_
+    def merge_weights_and_biases(self, merging_weights: Float[t.Tensor, "num_experts"]) -> ExpertLinearParams:
+        """Merge experts into a single expert for SMEAR method.
 
         Parameters
         ----------
@@ -124,22 +164,10 @@ class ExpertList(nn.ModuleList):
             Merged expert
         """
         # Merge weights and biases
-        new_up_weights = einsum("num_experts dim up_dim, num_experts -> dim up_dim", self.up_expert_weights, merging_weights) # dim up_dim
+        new_up_weights = einsum("num_experts up_dim dim, num_experts -> dim up_dim", self.up_expert_weights, merging_weights) # dim up_dim
         new_up_biases = einsum("num_experts up_dim, num_experts -> up_dim", self.up_expert_biases, merging_weights)
-        new_down_weights = einsum("num_experts up_dim dim, num_experts -> up_dim dim", self.down_expert_weights, merging_weights)
+
+        new_down_weights = einsum("num_experts dim up_dim, num_experts -> up_dim dim", self.down_expert_weights, merging_weights)
         new_down_biases = einsum("num_experts dim, num_experts -> dim", self.down_expert_biases, merging_weights)
 
-        dim, up_dim = new_up_weights.shape
-        # Create linear layers
-        new_up_expert = nn.Linear(in_features = dim, out_features =up_dim, bias = True)
-        new_up_expert.weight = nn.Parameter(new_up_weights.clone())
-        new_up_expert.bias = nn.Parameter(new_up_biases.clone())
-
-        new_down_expert = nn.Linear(in_features = up_dim, out_features = dim, bias = True)
-        new_down_expert.weight = nn.Parameter(new_down_weights.clone())
-        new_down_expert.bias = nn.Parameter(new_down_biases.clone())
-
-        # Assemble expert
-        new_expert = Expert(up_expert = new_up_expert, down_expert = new_down_expert, act_fn = self.experts[0].act_fn, dropout = self.experts[0].dropout)
-
-        return new_expert
+        return ExpertLinearParams(up_expert_weight = new_up_weights, up_expert_bias = new_up_biases, down_expert_weight = new_down_weights, down_expert_bias = new_down_biases)

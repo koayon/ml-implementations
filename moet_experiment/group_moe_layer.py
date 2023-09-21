@@ -32,6 +32,7 @@ def get_experts(
         ffn_ratio: float,
         group_size: int,
         dropout: float,
+        act_fn: nn.Module = nn.SiLU(),
     ) -> ExpertList:
         """
         Create a list of expert modules based on the given parameters. The experts in the same group share the same down layer.
@@ -72,7 +73,7 @@ def get_experts(
             # group_size experts share the same up layer. Each has a unique down layer.
             expert_group_num = expert_num // group_size
             experts.append(
-                Expert(up_expert = up_experts[expert_num], down_expert = down_experts[expert_group_num], act_fn = nn.SiLU(), dropout = dropout)
+                Expert(up_expert = up_experts[expert_num], down_expert = down_experts[expert_group_num], act_fn = act_fn, dropout = dropout)
             )
 
         experts = ExpertList(experts)
