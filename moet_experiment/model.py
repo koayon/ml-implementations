@@ -153,19 +153,20 @@ class MoET(nn.Module):
 
 def main():
     model = MoET()
-    # print(model)
+    print(model)
+    print(model.sequential_layers.moe_block_hash0)
     # print(tiny_stories_true_parameter_count(model, config.hidden_size))
     # print(get_param_count_dict(model).head(10))
 
     # Test model
-    input_str = "Hello world"
-    tokens_list = tokenizer(input_str)["input_ids"]
-    tokens = t.tensor(tokens_list).unsqueeze(0)  # batch seq
+    # input_str = "Hello world"
+    # tokens_list = tokenizer(input_str)["input_ids"]
+    # tokens = t.tensor(tokens_list).unsqueeze(0)  # batch seq
 
-    print(tokens.shape)
-    out, _moe_cache = model(tokens)
-    print(out.shape)
-    print(out)
+    # print(tokens.shape)
+    # out, _moe_cache = model(tokens)
+    # print(out.shape)
+    # print(out)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ class Expert(nn.Module):
         self.dropout = dropout
         self.act_fn = act_fn
 
+        self.all_weights: list[t.Tensor] = [self.up_expert_weight, self.up_expert_bias, self.down_expert_weight, self.down_expert_bias]
+
         self.expert = nn.Sequential(
                         OrderedDict(
                             [

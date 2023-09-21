@@ -51,7 +51,7 @@ class MoETBlock(nn.Module):
         else:
             self.norm2 = nn.LayerNorm(config.hidden_size)
 
-        self.expert_layer = GroupMoELayer(
+        self.moe_layer = GroupMoELayer(
             num_experts=num_experts,
             config=config,
             layer_id=layer_id,
@@ -81,7 +81,7 @@ class MoETBlock(nn.Module):
 
         x = self.norm2(x)
 
-        y, moe_layer_cache = self.expert_layer(x=x, input_tokens=input_tokens)
+        y, moe_layer_cache = self.moe_layer(x=x, input_tokens=input_tokens)
 
         if hasattr(self, "parallel_ffn"):
             y = y + self.parallel_ffn(y)
