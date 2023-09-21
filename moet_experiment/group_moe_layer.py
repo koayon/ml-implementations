@@ -1,5 +1,3 @@
-from collections import OrderedDict
-from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Optional, Tuple, Union
 
@@ -10,7 +8,6 @@ from numpy import cumsum
 from torch import nn
 from torch.nn import functional as F
 
-from general.swiglu_ffn import SwiGLUFFN
 from helpers import einsum
 from mixture_of_experts.cache import (
     ExpertChoiceFullCache,
@@ -19,190 +16,14 @@ from mixture_of_experts.cache import (
     TokenChoiceFullCache,
     TokenChoiceLayerCache,
 )
-from mixture_of_experts.routers import HashRouter
+from mixture_of_experts.experts import Expert, ExpertList
+from mixture_of_experts.routers import HashRouter, Router, RouterEnums
 from moet_experiment.moet_config import MoETConfig
 from one_wide_moe.one_wide_config import OneWideConfig
-
-
-class RouterEnums(Enum):
-    linear = auto()
-    learned = auto()
-    hash = auto()
-
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 # config = MoETConfig()
-
-
-class Router(nn.Module):
-    def __init__(self, *, num_experts: int, router_str: str, config: Union[MoETConfig, OneWideConfig]):
-        super().__init__()
-        self.config = config
-
-        self.router_enum = RouterEnums[router_str]
-        self.router_temperature = config.router_temperature
-        self.num_experts = num_experts
-        self.hidden_size = config.hidden_size
-
-        if self.router_enum in (RouterEnums.linear, RouterEnums.learned):
-            # Define the linear router
-            self.linear = nn.Linear(self.hidden_size, self.num_experts)
-        elif self.router_enum == RouterEnums.hash:
-            assert isinstance(config, MoETConfig)
-            # Build the hash router
-            assert config.num_experts_hash == self.num_experts
-            self.hash_router = HashRouter(
-                config=config, num_experts=config.num_experts_hash)
-            # self.hash_router.build_random_hash()
-        else:
-            raise ValueError(
-                f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
-
-        self.routing_dropout = nn.Dropout(config.routing_dropout)
-
-    def forward(self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None) -> t.Tensor:
-        """
-        Parameters:
-        x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
-        input_tokens (Optional[t.IntTensor]): Original input tokens required if router_str is "hash". Shape (batch_size, hidden_size).
-
-        Returns:
-        t.Tensor: Mapping from input tokens to experts. Shape (batch_size, num_experts).
-
-        Raises:
-        AssertionError: If router_str is "hash" and input_tokens is None.
-        """
-
-        if self.router_enum == RouterEnums["hash"]:
-            assert input_tokens is not None
-
-            input_tokens = rearrange(input_tokens, "b s -> (b s)")
-            clean_h = self.hash_router(input_tokens).float()  # bs num_experts
-        else:
-            clean_h = self.linear(x)  # bs num_experts
-            clean_h = self.routing_dropout(clean_h)  # bs num_experts
-
-        # Add gumbel noise to the routing logits to encourage exploration during training
-        # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
-        if self.training and (self.router_enum in (RouterEnums.linear, RouterEnums.learned)):
-            gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
-            h = (clean_h + gumbel_noise) / self.router_temperature
-            return h  # bs num_experts
-        else:
-            return clean_h # bs num_experts
-
-class Expert(nn.Module):
-    """Regular FFN expert with up and down projections.
-
-        Parameters
-        ----------
-        up_expert : nn.Linear
-            _description_
-        down_expert : nn.Linear
-            _description_
-        act_fn : nn.Module
-            _description_
-        dropout : nn.Module
-            _description_
-    """
-
-    def __init__(self, up_expert: nn.Linear, down_expert: nn.Linear, act_fn: nn.Module, dropout: float):
-        super().__init__()
-        self.up_expert_weight: t.Tensor = up_expert.weight
-        self.up_expert_bias: t.Tensor = up_expert.bias
-        self.down_expert_weight: t.Tensor = down_expert.weight
-        self.down_expert_bias: t.Tensor = down_expert.bias
-        self.dropout = dropout
-        self.act_fn = act_fn
-
-        self.expert = nn.Sequential(
-                        OrderedDict(
-                            [
-                                ("up_expert", up_expert),
-                                ("act_fn", act_fn),
-                                ("down_expert", down_expert),
-                                ("expert_dropout", nn.Dropout(dropout)),
-                            ]
-                        )
-                    )
-
-    def forward(self, x: t.Tensor):
-        return self.expert(x)
-
-
-
-class ExpertList(nn.ModuleList):
-    def __init__(self, experts: list[Expert]):
-        super().__init__(experts)
-        self.experts = experts
-
-    @property
-    def up_expert_weights(self) -> t.Tensor:
-        """
-        Returns
-        -------
-        t.Tensor
-            num_experts, dim, up_dim
-        """
-        expert_weights = t.stack([expert.up_expert_weight for expert in self.experts], dim = 0) # num_experts dim up_dim
-        return expert_weights
-
-    @property
-    def up_expert_biases(self) -> t.Tensor:
-        """
-        Returns
-        -------
-        t.Tensor
-            num_experts, up_dim
-        """
-        expert_biases = t.stack([expert.up_expert_bias for expert in self.experts], dim = 0) # num_experts up_dim
-        return expert_biases
-
-    @property
-    def down_expert_weights(self) -> t.Tensor:
-        """
-        Returns
-        -------
-        t.Tensor
-            num_experts, up_dim, dim
-        """
-        expert_weights = t.stack([expert.down_expert_weight for expert in self.experts], dim = 0)
-        return expert_weights
-
-    @property
-    def down_expert_biases(self) -> t.Tensor:
-        """
-        Returns
-        -------
-        t.Tensor
-            num_experts, dim
-        """
-        expert_biases = t.stack([expert.down_expert_bias for expert in self.experts], dim = 0)
-        return expert_biases
-
-    def merge_weights_and_biases(self, merging_weights: Float[t.Tensor, "num_experts"]) -> Expert:
-        # Merge weights and biases
-        new_up_weights = einsum("num_experts dim up_dim, num_experts -> dim up_dim", self.up_expert_weights, merging_weights) # dim up_dim
-        new_up_biases = einsum("num_experts up_dim, num_experts -> up_dim", self.up_expert_biases, merging_weights)
-        new_down_weights = einsum("num_experts up_dim dim, num_experts -> up_dim dim", self.down_expert_weights, merging_weights)
-        new_down_biases = einsum("num_experts dim, num_experts -> dim", self.down_expert_biases, merging_weights)
-
-        dim, up_dim = new_up_weights.shape
-        # Create linear layers
-        new_up_expert = nn.Linear(in_features = dim, out_features =up_dim, bias = True)
-        new_up_expert.weight = nn.Parameter(new_up_weights)
-        new_up_expert.bias = nn.Parameter(new_up_biases)
-
-        new_down_expert = nn.Linear(in_features = up_dim, out_features = dim, bias = True)
-        new_down_expert.weight = nn.Parameter(new_down_weights)
-        new_down_expert.bias = nn.Parameter(new_down_biases)
-
-        # Assemble expert
-        new_expert = Expert(up_expert = new_up_expert, down_expert = new_down_expert, act_fn = self.experts[0].act_fn, dropout = self.experts[0].dropout)
-
-        return new_expert
-
 
 def get_experts(
         num_experts: int,
