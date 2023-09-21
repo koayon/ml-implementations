@@ -1,7 +1,9 @@
 import sys
-from typing import Any, Optional
+from enum import Enum, auto
+from typing import Any, Optional, Tuple, Union
 
 import torch as t
+from einops import rearrange
 from jaxtyping import Int
 from torch import nn
 from torch.nn.functional import one_hot
@@ -9,9 +11,73 @@ from torch.nn.functional import one_hot
 from general import device
 from mixture_of_experts.config import MoEConfig
 from moet_experiment.moet_config import MoETConfig
+from one_wide_moe.one_wide_config import OneWideConfig
 
 config = MoEConfig()
 
+class RouterEnums(Enum):
+    linear = auto()
+    learned = auto()
+    hash = auto()
+
+class Router(nn.Module):
+    def __init__(self, *, num_experts: int, router_str: str, config: Union[MoETConfig, OneWideConfig]):
+        super().__init__()
+        self.config = config
+
+        self.router_enum = RouterEnums[router_str]
+        self.router_temperature = config.router_temperature
+        self.num_experts = num_experts
+        self.hidden_size = config.hidden_size
+
+        if self.router_enum in (RouterEnums.linear, RouterEnums.learned):
+            # Define the linear router
+            self.linear = nn.Linear(self.hidden_size, self.num_experts)
+        elif self.router_enum == RouterEnums.hash:
+            assert isinstance(config, MoETConfig)
+            # Build the hash router
+            assert config.num_experts_hash == self.num_experts
+            self.hash_router = HashRouter(
+                config=config, num_experts=config.num_experts_hash)
+            # self.hash_router.build_random_hash()
+        else:
+            raise ValueError(
+                f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
+
+        self.routing_dropout = nn.Dropout(config.routing_dropout)
+
+    def forward(self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None) -> t.Tensor:
+        """
+        Parameters:
+        x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
+        input_tokens (Optional[t.IntTensor]): Original input tokens required if router_str is "hash". Shape (batch_size, hidden_size).
+
+        Returns:
+        t.Tensor: Mapping from input tokens to experts. Shape (batch_size, num_experts).
+
+        Raises:
+        AssertionError: If router_str is "hash" and input_tokens is None.
+        """
+
+        if self.router_enum == RouterEnums["hash"]:
+            assert input_tokens is not None
+
+            input_tokens = rearrange(input_tokens, "b s -> (b s)")
+            clean_h = self.hash_router(input_tokens).float()  # bs num_experts
+
+            return clean_h # bs num_experts
+        else:
+            clean_h = self.linear(x)  # bs num_experts
+            clean_h = self.routing_dropout(clean_h)  # bs num_experts
+
+            # Add gumbel noise to the routing logits to encourage exploration during training
+            # self.training is inherited from nn.Module and is set by calling model.train() or model.eval()
+            if self.training:
+                gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
+                h = (clean_h + gumbel_noise) / self.router_temperature
+                return h  # bs num_experts
+
+            return clean_h  # bs num_experts
 
 class HashRouter(nn.Module):
     """Router for the MoE layer that uses a hash function to assign tokens to experts.
