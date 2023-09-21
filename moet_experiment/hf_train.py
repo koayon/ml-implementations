@@ -308,7 +308,7 @@ def main():
 
     dataset = load_dataset("roneneldan/TinyStories")
     assert isinstance(dataset, DatasetDict)
-    print(f"Example from dataset: \n {dataset["train"][0]}")
+    print(f"Example from dataset: \n {dataset['train'][0]}")
 
     processed_dataset = dataset.map(lambda x: tokenizer(x["text"],
                                                         padding="max_length", max_length=config.block_size,

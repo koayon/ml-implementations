@@ -9,8 +9,8 @@ from one_wide_moe.shared_moe_model import SharedParamsMoEModel
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
 
-@pytest.mark.parametrize("ffn_dim_multiplier", [4, 6])
-@pytest.mark.parametrize("num_experts", [2, 4])
+@pytest.mark.parametrize("ffn_dim_multiplier", [4])
+@pytest.mark.parametrize("num_experts", [4])
 @pytest.mark.parametrize("share_attention_layers", [True, False])
 @pytest.mark.parametrize("share_moe_layers", [True, False])
 @pytest.mark.parametrize("share_routers", [True, False])

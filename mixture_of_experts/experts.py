@@ -22,11 +22,11 @@ class Expert(nn.Module):
             _description_
         act_fn : nn.Module
             _description_
-        dropout : nn.Module
+        dropout : float
             _description_
     """
 
-    def __init__(self, up_expert: nn.Linear, down_expert: nn.Linear, act_fn: nn.Module, dropout: float):
+    def __init__(self, up_expert: nn.Linear, down_expert: nn.Linear, act_fn: nn.Module, dropout: float = 0.1):
         super().__init__()
         self.up_expert_weight: t.Tensor = up_expert.weight
         self.up_expert_bias: t.Tensor = up_expert.bias
@@ -84,9 +84,9 @@ class ExpertFromWeights(nn.Module):
         self.act_fn = act_fn
 
     def forward(self, x: t.Tensor):
-        x = F.linear(x, weight = self.up_expert_weight.T, bias = self.up_expert_bias)
+        x = F.linear(x, weight = self.up_expert_weight, bias = self.up_expert_bias)
         x = self.act_fn(x)
-        x = F.linear(x, weight = self.down_expert_weight.T, bias = self.down_expert_bias)
+        x = F.linear(x, weight = self.down_expert_weight, bias = self.down_expert_bias)
         x = F.dropout(x, p = self.dropout)
         return x
 
@@ -149,14 +149,16 @@ class ExpertList(nn.ModuleList):
 
         Returns
         -------
-        Expert
-            Merged expert
+        ExpertLinearParams
+            Container for up and down expert weights and biases
         """
+        assert merging_weights.shape == (len(self.experts),)
+
         # Merge weights and biases
-        new_up_weights = einsum("num_experts up_dim dim, num_experts -> dim up_dim", self.up_expert_weights, merging_weights) # dim up_dim
+        new_up_weights = einsum("num_experts up_dim dim, num_experts -> up_dim dim", self.up_expert_weights, merging_weights)
         new_up_biases = einsum("num_experts up_dim, num_experts -> up_dim", self.up_expert_biases, merging_weights)
 
-        new_down_weights = einsum("num_experts dim up_dim, num_experts -> up_dim dim", self.down_expert_weights, merging_weights)
+        new_down_weights = einsum("num_experts dim up_dim, num_experts -> dim up_dim", self.down_expert_weights, merging_weights)
         new_down_biases = einsum("num_experts dim, num_experts -> dim", self.down_expert_biases, merging_weights)
 
         return ExpertLinearParams(up_expert_weight = new_up_weights, up_expert_bias = new_up_biases, down_expert_weight = new_down_weights, down_expert_bias = new_down_biases)
