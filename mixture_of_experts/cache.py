@@ -149,18 +149,39 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
 
     @property
     def token_assignments(self) -> Int[t.Tensor, "layer num_experts k"]:
+        """
+        Token assignments is the top k tokens processed by each expert across each layer
+        Returns
+        -------
+        IntTensor
+            layer num_experts k
+        """
         out = t.stack([cache.token_assignments for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer k num_experts -> layer num_experts k")
         return out
 
     @property
     def P(self) -> Int[t.Tensor, "layer num_experts bs k"]:
+        """
+        The permutation matrix for each expert and token
+        Returns
+        -------
+        IntTensor
+            layer num_experts bs k
+        """
         out = t.stack([cache.P for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer bs k num_experts -> layer num_experts bs k")
         return out
 
     @property
     def routing_logits_tensor(self) -> Float[t.Tensor, "layer num_experts batch_seq"]:
+        """
+        The raw routing logits
+        Returns
+        -------
+        Tensor (float)
+            layer num_experts batch_seq
+        """
         out = t.stack([cache.routing_logits for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer batch_seq num_experts -> layer num_experts batch_seq")
         return out
