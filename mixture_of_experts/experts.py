@@ -1,25 +1,14 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from enum import Enum, auto
-from turtle import up
-from typing import Any, Optional, Tuple, Union
+from typing import Tuple
 
 import torch as t
 from einops import rearrange, repeat
 from jaxtyping import Float, Int
-from numpy import cumsum
 from torch import nn
 from torch.nn import functional as F
 
-from general.swiglu_ffn import SwiGLUFFN
 from helpers import einsum
-from mixture_of_experts.cache import (
-    ExpertChoiceFullCache,
-    ExpertChoiceLayerCache,
-    MoELayerCache,
-    TokenChoiceFullCache,
-    TokenChoiceLayerCache,
-)
 
 
 class Expert(nn.Module):
@@ -112,7 +101,7 @@ class ExpertList(nn.ModuleList):
         Returns
         -------
         t.Tensor
-            num_experts, dim, up_dim
+            num_experts, up_dim, dim
         """
         expert_weights = t.stack([expert.up_expert_weight for expert in self.experts], dim = 0) # num_experts dim up_dim
         return expert_weights
@@ -134,7 +123,7 @@ class ExpertList(nn.ModuleList):
         Returns
         -------
         t.Tensor
-            num_experts, up_dim, dim
+            num_experts, dim, up_dim
         """
         expert_weights = t.stack([expert.down_expert_weight for expert in self.experts], dim = 0)
         return expert_weights
@@ -171,3 +160,23 @@ class ExpertList(nn.ModuleList):
         new_down_biases = einsum("num_experts dim, num_experts -> dim", self.down_expert_biases, merging_weights)
 
         return ExpertLinearParams(up_expert_weight = new_up_weights, up_expert_bias = new_up_biases, down_expert_weight = new_down_weights, down_expert_bias = new_down_biases)
+
+def get_expert_linears(expert_linear_params: ExpertLinearParams) -> Tuple[nn.Linear, nn.Linear]:
+    """Get up and down projections from expert linear parameters.
+    Used for Experts Weights Averaging
+
+    Reference: https://arxiv.org/pdf/2308.06093.pdf"""
+
+    #TODO: Refactor and add tests
+
+    up_dim, dim = expert_linear_params.up_expert_weight.shape
+
+    up_expert = nn.Linear(in_features = dim, out_features = up_dim, bias = True)
+    up_expert.weight.data = expert_linear_params.up_expert_weight.T
+    up_expert.bias.data = expert_linear_params.up_expert_bias
+
+    down_expert = nn.Linear(in_features = up_dim, out_features = dim, bias = True)
+    down_expert.weight.data = expert_linear_params.down_expert_weight.T
+    down_expert.bias.data = expert_linear_params.down_expert_bias
+
+    return up_expert, down_expert

@@ -110,8 +110,8 @@ class SoftMergingExpertLayer(nn.Module):
             layer_cache = SMEARLayerCache(routing_matrix=routing_matrix, routing_logits=routing_logits)
 
             # Define merged (smeared) expert module (considering final token)
-            merged_expert_weights = self.experts.merge_weights_and_biases(merging_weights = routing_matrix[-1])
-            merged_expert = ExpertFromWeights(expert_linear_params=merged_expert_weights, act_fn=self.act_fn, dropout=self.dropout)
+            merged_expert_weights_and_biases = self.experts.merge_weights_and_biases(merging_weights = routing_matrix[-1])
+            merged_expert = ExpertFromWeights(expert_linear_params=merged_expert_weights_and_biases, act_fn=self.act_fn, dropout=self.dropout)
         else:
             layer_cache = None
 
