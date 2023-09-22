@@ -8,8 +8,9 @@ from typeguard import typechecked
 
 # Initialise cache for routing and use for MoE layers
 
+
 @dataclass
-class ExpertChoiceLayerCache():
+class ExpertChoiceLayerCache:
     """G: softmaxed routing weights for the top k experts
         [k num_experts]
     token_assignments: the top k expert ids
@@ -34,8 +35,9 @@ class ExpertChoiceLayerCache():
         self.P = self.P.detach()
         self.routing_logits = self.routing_logits.detach()
 
+
 @dataclass
-class TokenChoiceLayerCache():
+class TokenChoiceLayerCache:
     """G: softmaxed routing weights for the top k experts
         [batch_seq k]
     token_assignments: the top k expert ids
@@ -60,8 +62,9 @@ class TokenChoiceLayerCache():
         self.P = self.P.detach()
         self.routing_logits = self.routing_logits.detach()
 
+
 @dataclass
-class SoftTokenMergeLayerCache():
+class SoftTokenMergeLayerCache:
     """
     G: softmaxed routing weights for the top k experts
         [batch_seq k]
@@ -85,8 +88,9 @@ class SoftTokenMergeLayerCache():
 
         self.routing_logits = self.routing_logits.detach()
 
+
 @dataclass
-class SMEARLayerCache():
+class SMEARLayerCache:
     """
     routing_logits: raw outputs of the routing model (before softmax)
         [batch_seq num_experts]
@@ -105,6 +109,7 @@ def pad_with_negs(tensor: t.Tensor) -> t.Tensor:
     # Get -1s to double the number of experts and pad the cache
     negs = -t.ones_like(tensor)
     return t.cat([tensor, negs], dim=1)
+
 
 # @typechecked
 class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
@@ -183,7 +188,9 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
             layer num_experts batch_seq
         """
         out = t.stack([cache.routing_logits for idx, cache in self.items()], dim=0)
-        out = rearrange(out, "layer batch_seq num_experts -> layer num_experts batch_seq")
+        out = rearrange(
+            out, "layer batch_seq num_experts -> layer num_experts batch_seq"
+        )
         return out
 
     @property
@@ -200,8 +207,7 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
 
     @property
     def num_tokens(self) -> int:
-        return self.routing_logits_tensor.shape[-1] # batch_seq
-
+        return self.routing_logits_tensor.shape[-1]  # batch_seq
 
     def _pad_with_negative1s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with -1s so that they can stack together nicely"""
@@ -218,16 +224,23 @@ class ExpertChoiceFullCache(Dict[str, ExpertChoiceLayerCache]):
         for _, cache in self.items():
             if cache.G.shape[1] < self.num_experts:
                 cache.G = repeat(cache.G, "k num_experts -> k (2 num_experts)")
-                cache.token_assignments = repeat(cache.token_assignments, "k num_experts -> k (2 num_experts)")
+                cache.token_assignments = repeat(
+                    cache.token_assignments, "k num_experts -> k (2 num_experts)"
+                )
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
-                cache.routing_logits = repeat(cache.routing_logits, "batch_seq num_experts -> batch_seq (2 num_experts)")
+                cache.routing_logits = repeat(
+                    cache.routing_logits,
+                    "batch_seq num_experts -> batch_seq (2 num_experts)",
+                )
 
     def _pad_k_dim(self) -> None:
         for _, cache in self.items():
             if cache.G.shape[0] < self.k:
                 cache.G = repeat(cache.G, "k num_experts -> (2 k) num_experts")
-                cache.token_assignments = repeat(cache.token_assignments, "k num_experts -> (2 k) num_experts")
+                cache.token_assignments = repeat(
+                    cache.token_assignments, "k num_experts -> (2 k) num_experts"
+                )
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")
 
@@ -248,13 +261,11 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         """
         super().__init__(moe_cache_dict)
 
-
-
     def __setitem__(self, idx: str, cache: TokenChoiceLayerCache) -> None:
         assert isinstance(cache, TokenChoiceLayerCache)
         super().__setitem__(idx, cache)
 
-         # Make sure the cache has consistent shapes even when the number of experts per layer varies
+        # Make sure the cache has consistent shapes even when the number of experts per layer varies
         # self._pad_with_negative1s()
         self._pad_with_duplicates()
         self._pad_k_dim()
@@ -264,26 +275,56 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
 
     @property
     def G(self) -> Float[t.Tensor, "batch_seq layer k"]:
+        """G is the softmaxed routing weights for the top k experts
+
+        Returns
+        -------
+        t.Tensor [batch_seq layer k]
+        """
         out = t.stack([cache.G for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer batch_seq k -> batch_seq layer k")
         return out
 
     @property
     def expert_assignments(self) -> Int[t.Tensor, "batch_seq layer k"]:
+        """
+        Top k tokens processed by each expert across each layer
+
+        Returns
+        -------
+        IntTensor
+            batch_seq layer k
+        """
         out = t.stack([cache.expert_assignments for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer batch_seq k -> batch_seq layer k")
         return out
 
     @property
     def P(self) -> Int[t.Tensor, "layer num_experts bs k"]:
+        """
+        The permutation matrix for each expert and token
+        Returns
+        -------
+        IntTensor
+            layer num_experts bs k
+        """
         out = t.stack([cache.P for idx, cache in self.items()], dim=0)
         out = rearrange(out, "layer bs k num_experts -> layer num_experts bs k")
         return out
 
     @property
     def routing_logits_tensor(self) -> Float[t.Tensor, "layer num_experts batch_seq"]:
+        """
+        The raw routing logits
+        Returns
+        -------
+        Tensor (float)
+            layer num_experts batch_seq
+        """
         out = t.stack([cache.routing_logits for idx, cache in self.items()], dim=0)
-        out = rearrange(out, "layer batch_seq num_experts -> layer num_experts batch_seq")
+        out = rearrange(
+            out, "layer batch_seq num_experts -> layer num_experts batch_seq"
+        )
         return out
 
     @property
@@ -292,15 +333,17 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
 
     @property
     def k(self) -> int:
-        return max([layer_cache.G.shape[1] for idx, layer_cache in self.items()])
+        return max([layer_cache.G.shape[0] for idx, layer_cache in self.items()])
 
     @property
     def num_experts(self) -> int:
-        return max([layer_cache.routing_logits.shape[-1] for idx, layer_cache in self.items()])
+        return max(
+            [layer_cache.routing_logits.shape[-1] for idx, layer_cache in self.items()]
+        )
 
     @property
     def num_tokens(self) -> int:
-        return self.routing_logits_tensor.shape[-1] # batch_seq
+        return self.routing_logits_tensor.shape[-1]  # batch_seq
 
     def _pad_with_negative1s(self) -> None:
         """Some layers of the cache might have half the number of experts. In this case we want to pad this tensor with 0s so that they can stack together nicely"""
@@ -315,16 +358,26 @@ class TokenChoiceFullCache(Dict[str, TokenChoiceLayerCache]):
         for _, cache in self.items():
             if cache.routing_logits.shape[1] < self.num_experts:
                 cache.P = repeat(cache.P, "bs k num_experts -> bs k (2 num_experts)")
-                cache.routing_logits = repeat(cache.routing_logits, "batch_seq num_experts -> batch_seq (2 num_experts)")
+                cache.routing_logits = repeat(
+                    cache.routing_logits,
+                    "batch_seq num_experts -> batch_seq (2 num_experts)",
+                )
 
     def _pad_k_dim(self) -> None:
         for _, cache in self.items():
             if cache.G.shape[1] < self.k:
                 cache.G = repeat(cache.G, "bs k -> bs (2 k)")
-                cache.expert_assignments = repeat(cache.expert_assignments, "bs k -> bs (2 k)")
+                cache.expert_assignments = repeat(
+                    cache.expert_assignments, "bs k -> bs (2 k)"
+                )
 
                 cache.P = repeat(cache.P, "bs k num_experts -> bs (2 k) num_experts")
 
 
-MoELayerCache = Union[ExpertChoiceLayerCache, TokenChoiceLayerCache, SoftTokenMergeLayerCache, SMEARLayerCache]
+MoELayerCache = Union[
+    ExpertChoiceLayerCache,
+    TokenChoiceLayerCache,
+    SoftTokenMergeLayerCache,
+    SMEARLayerCache,
+]
 MoECache = Union[ExpertChoiceFullCache, TokenChoiceFullCache]
