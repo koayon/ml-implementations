@@ -59,7 +59,10 @@ submit_button = st.button("Submit")
 if submit_button:
     LAYER_INDEX = "moe_block_early2"
     coloured_text = generate_output_visual(
-        expert=(LAYER_INDEX, 0), model=st.session_state["model"], input_str=input_str
+        expert1=(LAYER_INDEX, 0),
+        expert2=(LAYER_INDEX, 1),
+        model=st.session_state["model"],
+        input_str=input_str,
     )
 
     st.subheader("Output")
