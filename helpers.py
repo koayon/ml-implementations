@@ -1,3 +1,4 @@
+import logging
 import tempfile
 import time
 from functools import wraps
@@ -128,3 +129,11 @@ def tiny_stories_true_parameter_count(model: nn.Module, hidden_size: int):
     unused_embedding_count = (VOCAB_SIZE - TRUE_VOCAB_SIZE) * hidden_size
     unused_positional_embedding_count = (POS_SIZE - SEQ_LEN) * hidden_size
     return total_count - unused_embedding_count - unused_positional_embedding_count
+
+
+def set_logging_level(level: str = "INFO"):
+    if level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        logging_level = logging.getLevelName(level)
+    else:
+        raise ValueError(f"Invalid logging level: {level}")
+    logging.basicConfig(level=logging.INFO)
