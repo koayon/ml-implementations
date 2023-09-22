@@ -1,10 +1,18 @@
+import os
+import sys
+
 import streamlit as st
 from transformers import AutoTokenizer
+
+# Get the current script's directory
+PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(PATH)
 
 from mixture_of_experts.cache import ExpertChoiceFullCache
 from mixture_of_experts.interp import tokens_processed_by_expert
 from moet_experiment.model import MoET
 
+# Set up
 st.set_page_config(
     layout="wide",
     page_title="Exploring Mixture of Experts",
@@ -14,29 +22,24 @@ st.set_page_config(
 
 MODEL_DICT = {"switch_transformer-small": None, "tiny_moe": None, "moet": MoET()}
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
+st.session_state["model"] = MoET()
 
 
-def set_model(model_name):
+def set_model(model_name) -> None:
     st.session_state["model"] = MODEL_DICT[model_name]
 
 
-st.session_state["model"] = MoET()
-st.session_state["set_model"] = set_model
-
+# Main
 st.title("MoE Interp Playground")
 
 with st.sidebar:
-    st.write("🧑 vs 🤖")
-    reset_button, reveal_button = [st.button("Reset game"), st.button("Reveal text")]
-    with st.form("model_form"):
-        # model_name = st.selectbox(
-        #     label="Model",
-        #     options=["switch_transformer-small", "tiny_moe", "moet"],
-        #     on_change=st.session_state["set_model"],
-        # )
-        # model = model_dict[model_name]
-        # submit_model = st.form_submit_button("Use this model")
-        pass
+    st.write("MoE Interp Playground")
+
+    model_name = st.selectbox(
+        label="Model",
+        options=["switch_transformer-small", "tiny_moe", "moet"],
+        on_change=set_model,
+    )
     # st.image("assets/mechanical_hands.png")
 
     st.write("Powered by PyTorch")
