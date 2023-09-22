@@ -2,17 +2,23 @@ import os
 import sys
 
 import streamlit as st
+import torch as t
 from transformers import AutoTokenizer
 
-# Get the current script's directory
-PATH = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(PATH)
+# Add the root directory to the path
+st_dir = os.path.dirname(os.path.abspath(__file__))
+moe_dir = os.path.dirname(st_dir)
+ROOT = os.path.dirname(moe_dir)
+sys.path.append(ROOT)
 
+from helpers import set_logging_level
 from mixture_of_experts.cache import ExpertChoiceFullCache
 from mixture_of_experts.interp import tokens_processed_by_expert
 from moet_experiment.model import MoET
 
 # Set up
+set_logging_level("INFO")
+
 st.set_page_config(
     layout="wide",
     page_title="Exploring Mixture of Experts",
@@ -20,9 +26,13 @@ st.set_page_config(
     menu_items={"About": "# Menu Item 1"},
 )
 
-MODEL_DICT = {"switch_transformer-small": None, "tiny_moe": None, "moet": MoET()}
+MODEL_DICT = {
+    "switch_transformer-small": None,
+    "tiny_moe": None,
+    "moet": MoET(use_expert_choice=True),
+}
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
-st.session_state["model"] = MoET()
+st.session_state["model"] = MODEL_DICT["moet"]
 
 
 def set_model(model_name) -> None:
@@ -51,27 +61,34 @@ submit_button = st.button("Submit")
 if submit_button:
     # Forward model
 
-    input_tokens = tokenizer(input_str, return_tensors="pt", padding=True)  # 1, seq_len
+    input_tokens = t.tensor(
+        tokenizer(input_str, return_tensors="pt")["input_ids"]
+    )  # 1, seq_len
+
+    # st.write(input_tokens)
 
     model = st.session_state["model"]
     cache: ExpertChoiceFullCache
     _, cache = model(input_tokens)
 
+    # st.write(cache.routing_logits_tensor.shape)
+
+    LAYER_INDEX = "moe_block_early2"
+
     # Get tokens processed by expert
     token_indexes, tokens = tokens_processed_by_expert(
-        cache=cache, layer_index="", expert_num=0
+        cache=cache, layer_index=LAYER_INDEX, expert_num=0
     )
     token_indexes = set(token_indexes)
 
     # Display the output
     coloured_text = ""
-    assert tokens is not None
 
-    for i, _ in enumerate(input_tokens):
+    for i, _ in enumerate(input_tokens.squeeze(0).tolist()):
         if i in token_indexes:
-            coloured_text += f"<span style='color: red;'>{tokens[i]}</span>"
+            coloured_text += f"<span style='color: red;'>{tokenizer.decode(input_tokens.squeeze(0)[i])}</span>"
         else:
-            coloured_text += tokens[i]
+            coloured_text += tokenizer.decode(input_tokens.squeeze(0)[i])
 
     st.subheader("Output")
     st.write(coloured_text, unsafe_allow_html=True)
