@@ -13,6 +13,7 @@ sys.path.append(ROOT)
 
 from helpers import set_logging_level
 from mixture_of_experts.streamlit.funcs import generate_output_visual
+from mixture_of_experts.streamlit.miley import MILEY
 from moet_experiment.model import MoET
 
 # Set up
@@ -52,7 +53,7 @@ with st.sidebar:
 
     st.write("Powered by PyTorch")
 
-input_str = st.text_input(label="Enter some text here")
+input_str = st.text_input(label="Enter some text here", value=MILEY)
 
 submit_button = st.button("Submit")
 
