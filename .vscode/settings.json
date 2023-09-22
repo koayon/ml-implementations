@@ -3,7 +3,6 @@
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
   "[python]": {
-    "editor.defaultFormatter": "ms-python.python"
-  },
-  "python.formatting.provider": "none"
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  }
 }
