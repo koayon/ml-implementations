@@ -1,19 +1,23 @@
+import plotly.express as px
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from einops import einsum
 
-SPARSITY = 0.11
+SPARSITY = 0.3
 DIM = 25
 HIDDEN_DIM = 6
 
-BATCH_SIZE = 500
-importances = t.abs(t.randn(DIM))
+BATCH_SIZE = 2000
+NUM_IMPORTANT_FEATURES = 4
+importances = t.tensor(
+    [10.0] * NUM_IMPORTANT_FEATURES + [1.0] * (DIM - NUM_IMPORTANT_FEATURES)
+)
 
 x = t.randn(BATCH_SIZE, DIM)
 
-sparsity_mask = t.rand(DIM) < SPARSITY
+sparsity_mask = t.abs(t.randn(BATCH_SIZE, DIM)) > SPARSITY
 x = x * sparsity_mask
 
 
@@ -47,22 +51,37 @@ class ReLUModel(nn.Module):
         return x_pred
 
 
-def importance_loss(x, x_preds, importances):
+def importance_loss(x, x_preds, importances=importances):
+    # print(x)
+    # print(x_preds)
     return t.sum((x - x_preds) ** 2 * importances)
 
 
-# Training Loop
+def train_model(model, x):
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
+    for epoch in range(200):
+        optimizer.zero_grad()
+        x_preds = model(x)
+        loss = importance_loss(x, x_preds)
+        loss.backward()
+        optimizer.step()
+        print(f"Epoch {epoch} Loss: {loss.item():.2f}")
+    return model
+
+
+def show_heatmap(W: t.Tensor) -> None:
+    fig = px.imshow((W.T @ W).detach().numpy())
+    fig.show()
+
+
+# Linear Model
+model = LinearModel()
+model = train_model(model, x)
+W = model.W
+show_heatmap(W)
+
+# ReLU Model
 model = ReLUModel()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
-criterion = importance_loss
-
-for epoch in range(1000):
-    optimizer.zero_grad()
-    x_preds = model(x)
-    loss = criterion(x, x_preds, importances)
-    loss.backward()
-    optimizer.step()
-    print(f"Epoch {epoch} Loss: {loss.item():.2f}")
-
+model = train_model(model, x)
 W = model.linear_model.W
-print(W.T @ W)
+show_heatmap(W)
