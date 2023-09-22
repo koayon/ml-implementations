@@ -4,11 +4,11 @@ from torch import nn
 
 from general import device
 from mixture_of_experts.experts import Expert, ExpertLinearParams, ExpertList
-from soft_moe.soft_expert_layer import SoftExpertLayer
 
 
 # Test with multiple experts and valid input.
-def test_multiple_experts_valid_input( dim: int = 2, up_dim: int = 3, merging_weights=t.tensor([0.4, 0.6])
+def test_multiple_experts_valid_input(
+    dim: int = 2, up_dim: int = 3, merging_weights=t.tensor([0.4, 0.6])
 ):
     # Initialize the class object with multiple experts
     expert1 = Expert(
@@ -43,7 +43,9 @@ def test_multiple_experts_valid_input( dim: int = 2, up_dim: int = 3, merging_we
         + merging_weights[1] * expert2.up_expert_weight,
     )
 
-def test_mismatch_number_of_experts(dim: int = 2, up_dim: int = 3, merging_weights=t.tensor([0.4, 0.6, 0.3])
+
+def test_mismatch_number_of_experts(
+    dim: int = 2, up_dim: int = 3, merging_weights=t.tensor([0.4, 0.6, 0.3])
 ):
     # Initialize the class object with multiple experts
     expert1 = Expert(

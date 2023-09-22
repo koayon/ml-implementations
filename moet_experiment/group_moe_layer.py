@@ -25,60 +25,67 @@ device = "cuda" if t.cuda.is_available() else "cpu"
 
 # config = MoETConfig()
 
+
 def get_experts(
-        num_experts: int,
-        hidden_size: int,
-        ffn_dim_multiplier: int,
-        ffn_ratio: float,
-        group_size: int,
-        dropout: float,
-        act_fn: nn.Module = nn.SiLU(),
-    ) -> ExpertList:
-        """
-        Create a list of expert modules based on the given parameters. The experts in the same group share the same down layer.
+    num_experts: int,
+    hidden_size: int,
+    ffn_dim_multiplier: int,
+    ffn_ratio: float,
+    group_size: int,
+    dropout: float,
+    act_fn: nn.Module = nn.SiLU(),
+) -> ExpertList:
+    """
+    Create a list of expert modules based on the given parameters. The experts in the same group share the same down layer.
 
-        Args:
-            num_experts (int): The total number of experts to create.
-            hidden_size (int): The size of the input and output features of the experts.
-            ffn_dim_multiplier (int): The multiplier for the intermediate dimension of the experts' feed-forward network.
-            ffn_ratio (float): The ratio of the intermediate dimension to the hidden size of the experts' feed-forward network.
-            group_size (int): The number of experts that share the same down layer.
-            dropout (float): The dropout probability for the experts.
+    Args:
+        num_experts (int): The total number of experts to create.
+        hidden_size (int): The size of the input and output features of the experts.
+        ffn_dim_multiplier (int): The multiplier for the intermediate dimension of the experts' feed-forward network.
+        ffn_ratio (float): The ratio of the intermediate dimension to the hidden size of the experts' feed-forward network.
+        group_size (int): The number of experts that share the same down layer.
+        dropout (float): The dropout probability for the experts.
 
-        Returns:
-            experts (nn.ModuleList): A list of expert modules that can be used for further computations.
-        """
-        assert num_experts % group_size == 0
+    Returns:
+        experts (nn.ModuleList): A list of expert modules that can be used for further computations.
+    """
+    assert num_experts % group_size == 0
 
-        num_expert_groups = num_experts // group_size
+    num_expert_groups = num_experts // group_size
 
-        # Grouped experts
-        up_experts = [
-            nn.Linear(
-                in_features=hidden_size,
-                out_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+    # Grouped experts
+    up_experts = [
+        nn.Linear(
+            in_features=hidden_size,
+            out_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+        )
+        for _ in range(num_experts)
+    ]
+    down_experts = [
+        nn.Linear(
+            in_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
+            out_features=hidden_size,
+        )
+        for _ in range(num_expert_groups)
+    ]
+
+    experts = []
+    for expert_num in range(num_experts):
+        # group_size experts share the same up layer. Each has a unique down layer.
+        expert_group_num = expert_num // group_size
+        experts.append(
+            Expert(
+                up_expert=up_experts[expert_num],
+                down_expert=down_experts[expert_group_num],
+                act_fn=act_fn,
+                dropout=dropout,
             )
-            for _ in range(num_experts)
-        ]
-        down_experts = [
-            nn.Linear(
-                in_features=int(hidden_size * ffn_dim_multiplier * ffn_ratio),
-                out_features=hidden_size,
-            )
-            for _ in range(num_expert_groups)
-        ]
+        )
 
-        experts = []
-        for expert_num in range(num_experts):
-            # group_size experts share the same up layer. Each has a unique down layer.
-            expert_group_num = expert_num // group_size
-            experts.append(
-                Expert(up_expert = up_experts[expert_num], down_expert = down_experts[expert_group_num], act_fn = act_fn, dropout = dropout)
-            )
+    experts = ExpertList(experts)
 
-        experts = ExpertList(experts)
+    return experts
 
-        return experts
 
 class GroupMoELayer(nn.Module):
     experts: nn.ModuleList
@@ -106,7 +113,11 @@ class GroupMoELayer(nn.Module):
 
         self.num_experts = num_experts
         self.num_expert_groups = num_experts // group_size
-        self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
+        self.use_expert_choice = (
+            use_expert_choice
+            if use_expert_choice is not None
+            else config.use_expert_choice
+        )
 
         self.layer_id = layer_id
 
@@ -117,15 +128,24 @@ class GroupMoELayer(nn.Module):
         if router:
             # If we've passed in a router then use that
             self.router = router
-        else: # Otherwise create a new router
+        else:  # Otherwise create a new router
             self.router = Router(
                 num_experts=num_experts,
                 router_str=router_str,
                 config=config,
             )
 
-
-        self.expert_layer = GroupExpertLayer(num_experts = num_experts, layer_id = layer_id, config = config, group_size = group_size, k = k, c = c, ffn_dim_multiplier = ffn_dim_multiplier, ffn_ratio = ffn_ratio, use_expert_choice = use_expert_choice)
+        self.expert_layer = GroupExpertLayer(
+            num_experts=num_experts,
+            layer_id=layer_id,
+            config=config,
+            group_size=group_size,
+            k=k,
+            c=c,
+            ffn_dim_multiplier=ffn_dim_multiplier,
+            ffn_ratio=ffn_ratio,
+            use_expert_choice=use_expert_choice,
+        )
 
     def forward(
         self, x: t.Tensor, input_tokens: Optional[t.Tensor] = None
@@ -157,12 +177,15 @@ class GroupMoELayer(nn.Module):
         x = rearrange(x, "b s h -> (b s) h")
         routing_logits = self.router(x, input_tokens)  # (b s) num_experts
 
-        y, layer_cache = self.expert_layer(x = x, routing_logits = routing_logits, batch_size = batch_size, seq_len = seq_len) # (b s) hidden_size
+        y, layer_cache = self.expert_layer(
+            x=x, routing_logits=routing_logits, batch_size=batch_size, seq_len=seq_len
+        )  # (b s) hidden_size
 
-        y = rearrange(y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size) # batch seq hidden_size
+        y = rearrange(
+            y, "(batch seq) hidden_size -> batch seq hidden_size", batch=batch_size
+        )  # batch seq hidden_size
 
         return y, layer_cache
-
 
 
 class GroupExpertLayer(nn.Module):
@@ -188,9 +211,12 @@ class GroupExpertLayer(nn.Module):
         # Either choose k or set it from the capacity factor (c)
         assert (k > 0) or (c > 0)
 
-
         self.num_experts = num_experts
-        self.use_expert_choice = use_expert_choice if use_expert_choice is not None else config.use_expert_choice
+        self.use_expert_choice = (
+            use_expert_choice
+            if use_expert_choice is not None
+            else config.use_expert_choice
+        )
 
         self.layer_id = layer_id
 
@@ -207,11 +233,9 @@ class GroupExpertLayer(nn.Module):
             dropout=config.expert_dropout,
         )
 
-        # Use the capacity factor to set k
-        if c > 0:
-            self.k = self.batch_size * self.seq_len * c // self.num_experts
-        else:
-            self.k = k
+        self.c = c
+        self.k = k
+        assert self.k > 0 or self.c > 0
 
     def forward(
         self, x: t.Tensor, routing_logits: t.Tensor, batch_size: int, seq_len: int
@@ -245,24 +269,26 @@ class GroupExpertLayer(nn.Module):
         # x = rearrange(x, "b s h -> (b s) h")
 
         assert routing_logits.shape == (bs, self.num_experts)
-        h = routing_logits # (b s) num_experts
+        h = routing_logits  # (b s) num_experts
 
         S = t.softmax(h, dim=-1)  # bs num_experts
 
         if self.use_expert_choice:
             G, chosen_token_index, P = self._expert_choice_routing_matrices(
-                S=S, batch_size=batch_size, seq_len=seq_len)
+                S=S, batch_size=batch_size, seq_len=seq_len
+            )
 
             layer_cache = ExpertChoiceLayerCache(
-                    G=G,
-                    P = P,
-                    token_assignments=chosen_token_index,
-                    routing_logits=h,
-                )
+                G=G,
+                P=P,
+                token_assignments=chosen_token_index,
+                routing_logits=h,
+            )
 
         else:
             G, chosen_expert_index, P = self._token_choice_routing_matrices(
-                S=S, batch_size=batch_size)
+                S=S, batch_size=batch_size, seq_len=seq_len
+            )
 
             layer_cache = TokenChoiceLayerCache(
                 G=G,
@@ -277,8 +303,10 @@ class GroupExpertLayer(nn.Module):
 
         # USE EXPERTS
         # forward the relevant tokens through the relevant expert
-        E_list = [self.experts[expert_num](tokens_for_expert[expert_num]) for expert_num in range(
-            self.num_experts)]  # num_experts list[k hidden_size]
+        E_list = [
+            self.experts[expert_num](tokens_for_expert[expert_num])
+            for expert_num in range(self.num_experts)
+        ]  # num_experts list[k hidden_size]
 
         E = t.stack(E_list, dim=0)  # num_experts k hidden_size
 
@@ -289,17 +317,27 @@ class GroupExpertLayer(nn.Module):
             # G [k num_experts]
             # E [num_experts k hidden_size]
             y = einsum(
-                "bs k expert, k expert, expert k hidden_size -> bs hidden_size", P.float(), G, E)
+                "bs k expert, k expert, expert k hidden_size -> bs hidden_size",
+                P.float(),
+                G,
+                E,
+            )
         else:
             # P [bs k num_experts]
             # G [bs k]
             # E [num_experts k hidden_size]
             y = einsum(
-                "bs k expert, bs k, expert k hidden_size -> bs hidden_size", P.float(), G, E)
+                "bs k expert, bs k, expert k hidden_size -> bs hidden_size",
+                P.float(),
+                G,
+                E,
+            )
 
         return y, layer_cache
 
-    def _expert_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+    def _expert_choice_routing_matrices(
+        self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int
+    ) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """Expert Choice: Each expert picks the top-k tokens it wants to process. In the moment that we pick the topk across the sequence dimension, we share some information across the time/seq dimension which would be a problem for autoregressive models (it's allowing the model to cheat). This is best used for non-autoregressive models.
 
         Parameters
@@ -312,15 +350,19 @@ class GroupExpertLayer(nn.Module):
         Tuple[t.Tensor, t.Tensor, t.Tensor]
             G, chosen_token_index, P
         """
+        bs = batch_size * seq_len
 
-
-        bs, _num_experts = S.shape
+        # Use the capacity factor to set k
+        if self.c > 0:
+            k = (bs * self.c) // self.num_experts
+        else:
+            k = self.k
 
         # If there aren't enough tokens in the input to select top k, reduce k
-        self.k = min(int(self.k), bs)
+        k = min(int(k), bs)
+        print("k expert_choice", k)
 
-        G, chosen_token_index = t.topk(
-            S, k=self.k, dim=0)  # k num_experts each
+        G, chosen_token_index = t.topk(S, k=k, dim=0)  # k num_experts each
 
         # Select top-k expert, with one-hot vector. P is the permutation matrix
         P: t.Tensor = F.one_hot(
@@ -332,7 +374,9 @@ class GroupExpertLayer(nn.Module):
 
         return G, chosen_token_index, P
 
-    def _token_choice_routing_matrices(self, S: Float[t.Tensor, "bs num_experts"], batch_size: int) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+    def _token_choice_routing_matrices(
+        self, S: Float[t.Tensor, "bs num_experts"], batch_size: int, seq_len: int
+    ) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """We use left-to-right token dropping.
 
         Token-choice: Each token picks the top-k experts it wants to process it. This is best used for autoregressive models.
@@ -355,10 +399,18 @@ class GroupExpertLayer(nn.Module):
             G, chosen_expert_index, P
         """
 
-        # If there aren't enough tokens in the input to select top k, reduce k
-        self.k = min(int(self.k), (self.num_experts))
+        bs = batch_size * seq_len
 
-        G, chosen_expert_index = t.topk(S, k=self.k, dim=1)  # bs k each
+        # Use the capacity factor to set k
+        if self.c > 0:
+            k = (bs * self.c) // self.num_experts
+        else:
+            k = self.k
+
+        # If there aren't enough tokens in the input to select top k, reduce k
+        k = min(int(self.k), self.num_experts)
+
+        G, chosen_expert_index = t.topk(S, k=k, dim=1)  # bs k each
 
         # We now need to decide which experts to drop. Eventually this has to be each expert with k tokens so it should be of G should be of shape (expert, k*bs)
 
@@ -369,20 +421,22 @@ class GroupExpertLayer(nn.Module):
 
         # We want to rearrange P. Currently we have a long line of bs such that we see all of the first batch before we see any of the second batch. We would like to see the first elements from all batches then second elements etc.
         # This means there's less variance in performance depending on where you happen to be within a batch
-        P = rearrange(P, "(b s) k num_experts -> (s b) k num_experts",
-                      b=batch_size)  # sb k num_experts
+        P = rearrange(
+            P, "(b s) k num_experts -> (s b) k num_experts", b=batch_size
+        )  # sb k num_experts
 
-        drop_points = self._get_first_drop_point(P=P, k=self.k)
+        drop_points = self._get_first_drop_point(P=P, k=k)
 
         for expert_num in range(self.num_experts):
             # Set everything after the drop point to 0
-            P[drop_points[expert_num]:, :, expert_num] = 0  # sb k num_experts
+            P[drop_points[expert_num] :, :, expert_num] = 0  # sb k num_experts
 
         # Now P defines a permutation matrix where each expert gets at most k tokens.
 
         # Rearrange P back to the usual shape
-        P = rearrange(P, "(s b) k num_experts -> (b s) k num_experts",
-                      b=batch_size)  # bs k num_experts
+        P = rearrange(
+            P, "(s b) k num_experts -> (b s) k num_experts", b=batch_size
+        )  # bs k num_experts
 
         return G, chosen_expert_index, P
 
@@ -409,10 +463,10 @@ class GroupExpertLayer(nn.Module):
 
         tokens_per_expert = t.sum(P, dim=1)  # sb num_experts
 
-        cumsum_tokens_per_expert = t.cumsum(
-            tokens_per_expert, dim=0)  # sb num_experts
+        cumsum_tokens_per_expert = t.cumsum(tokens_per_expert, dim=0)  # sb num_experts
         cumsum_tokens_per_expert = rearrange(
-            cumsum_tokens_per_expert, "sb num_experts -> num_experts sb")
+            cumsum_tokens_per_expert, "sb num_experts -> num_experts sb"
+        )
         # All the indices where we need to drop
         indices = t.nonzero(cumsum_tokens_per_expert >= k)
 
