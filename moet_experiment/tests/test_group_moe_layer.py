@@ -38,11 +38,9 @@ def test_group_moe_layer(
     moe_layer.to(device)
 
     x = t.randn(
-        (batch_size, seq_len, config.hidden_size),
-        requires_grad=True,
-        device = device
+        (batch_size, seq_len, config.hidden_size), requires_grad=True, device=device
     )
-    input = t.randint(0, 100, (batch_size, seq_len), device= device)
+    input = t.randint(0, 100, (batch_size, seq_len), device=device)
 
     # Check that forward pass works
     y, _cache = moe_layer(x, input)
@@ -57,7 +55,7 @@ def test_group_moe_layer(
     assert x.grad.requires_grad is False
 
 
-def test_group_moe_layer_exceptions(num_experts = 8):
+def test_group_moe_layer_exceptions(num_experts=8):
     moe_layer = GroupMoELayer(
         num_experts=num_experts,
         router_str="hash",
@@ -89,15 +87,39 @@ def test_group_moe_layer_exceptions(num_experts = 8):
             c=1.0,
         )
 
+
 # @pytest.xfail()
 def test_get_first_drop_point():
     P = t.zeros_like(t.randn(4, 1, 4))
-    P[0,0,0] = 1
-    P[1,0,0] = 1
-    P[2,0,1] = 1
-    P[3,0,1] = 0
+    P[0, 0, 0] = 1
+    P[1, 0, 0] = 1
+    P[2, 0, 1] = 1
+    P[3, 0, 1] = 0
 
     k = 1
-    drop_points = GroupExpertLayer._get_first_drop_point(P = P, k = k)
+    drop_points = GroupExpertLayer._get_first_drop_point(P=P, k=k)
 
     assert (drop_points == t.tensor([0, 2, -1, -1])).all()
+
+
+def test_expert_choice_routing_matrices(
+    num_experts: int = 2, batch_size=2, seq_len: int = 10
+):
+    expert_layer = GroupExpertLayer(
+        num_experts=num_experts, layer_id="layer1", use_expert_choice=True
+    )
+
+    S = t.randn(batch_size * seq_len, num_experts)
+
+    k = expert_layer.k
+
+    G, chosen_token_index, P = expert_layer._expert_choice_routing_matrices(
+        S=S, batch_size=batch_size, seq_len=seq_len
+    )
+
+    print(k)
+    assert False
+
+    assert G.shape == (k, num_experts)
+    assert chosen_token_index.shape == (k, num_experts)
+    assert P.shape == (batch_size * seq_len, k, num_experts)
