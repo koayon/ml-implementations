@@ -360,7 +360,6 @@ class GroupExpertLayer(nn.Module):
 
         # If there aren't enough tokens in the input to select top k, reduce k
         k = min(int(k), bs)
-        print("k expert_choice", k)
 
         G, chosen_token_index = t.topk(S, k=k, dim=0)  # k num_experts each
 
