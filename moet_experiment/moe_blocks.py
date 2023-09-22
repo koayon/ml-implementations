@@ -31,6 +31,7 @@ class MoETBlock(nn.Module):
         layer_id: str,
         router_str: str,
         norm_str: str = "rms",
+        use_expert_choice: Optional[bool] = None
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -57,6 +58,7 @@ class MoETBlock(nn.Module):
             layer_id=layer_id,
             group_size=group_size,  # group_size of 1 means no sharing of upsample parameters
             router_str=router_str,
+            use_expert_choice=use_expert_choice,
         )
 
         if parallel_ffn:

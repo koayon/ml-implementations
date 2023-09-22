@@ -1,4 +1,5 @@
 import collections
+import logging
 from typing import Optional, OrderedDict, Tuple, Union
 
 import tiktoken
@@ -11,7 +12,12 @@ from transformers import AutoTokenizer
 
 from alibi.transformer_block import ALiBiTransformerBlock
 from general.norms import RMSNorm
-from helpers import einsum, get_param_count_dict, tiny_stories_true_parameter_count
+from helpers import (
+    einsum,
+    get_param_count_dict,
+    set_logging_level,
+    tiny_stories_true_parameter_count,
+)
 from hooks import remove_hooks
 from mixture_of_experts.cache import (
     ExpertChoiceFullCache,
@@ -41,6 +47,7 @@ class MoET(nn.Module):
         self,
         *,
         config: MoETConfig = config,
+        use_expert_choice: Optional[bool] = config.use_expert_choice,
     ):
         super().__init__()
         self.config = config
@@ -72,6 +79,7 @@ class MoET(nn.Module):
                     parallel_ffn=True,
                     group_size=1,
                     router_str="learned",
+                    use_expert_choice=use_expert_choice,
                 )
             else:
                 layers[f"transformer_block{i}"] = T_Block(
@@ -88,6 +96,7 @@ class MoET(nn.Module):
                     parallel_ffn=False,
                     group_size=1,
                     router_str="learned",
+                    use_expert_choice=use_expert_choice,
                 )
             else:
                 layers[f"transformer_block{i}"] = T_Block(
@@ -105,9 +114,9 @@ class MoET(nn.Module):
         self.sequential_layers = nn.Sequential(layers)
         self.final_norm = RMSNorm(shape_without_batch=(config.hidden_size,))
 
-        if config.use_expert_choice:
+        if use_expert_choice:
             self.cache = ExpertChoiceFullCache({})
-        else: # use token choice
+        else:  # use token choice
             self.cache = TokenChoiceFullCache({})
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
@@ -116,9 +125,13 @@ class MoET(nn.Module):
         )  # batch seq vocab_size
         return out
 
-    def forward(self, input_ids: t.Tensor, attention_mask: Optional[t.Tensor] = None,
-                # moe_cache: Optional[MoECache] = None,
-                **kwargs) -> Tuple[t.Tensor, MoECache]:
+    def forward(
+        self,
+        input_ids: t.Tensor,
+        attention_mask: Optional[t.Tensor] = None,
+        # moe_cache: Optional[MoECache] = None,
+        **kwargs,
+    ) -> Tuple[t.Tensor, MoECache]:
         """
         x: batch seq_length
         """
