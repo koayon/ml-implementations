@@ -4,20 +4,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from einops import einsum
+from plotly.subplots import make_subplots
 
-SPARSITY = 0.3
+SPARSITY = 0.999
 DIM = 25
 HIDDEN_DIM = 6
 
 BATCH_SIZE = 2000
-NUM_IMPORTANT_FEATURES = 4
-importances = t.tensor(
-    [10.0] * NUM_IMPORTANT_FEATURES + [1.0] * (DIM - NUM_IMPORTANT_FEATURES)
-)
+importances = t.tensor([0.7**i for i in range(1, DIM + 1)])
 
-x = t.randn(BATCH_SIZE, DIM)
+x = t.rand(BATCH_SIZE, DIM)
 
-sparsity_mask = t.abs(t.randn(BATCH_SIZE, DIM)) > SPARSITY
+sparsity_mask = t.rand(BATCH_SIZE, DIM) > SPARSITY
 x = x * sparsity_mask
 
 
@@ -69,8 +67,26 @@ def train_model(model, x):
     return model
 
 
-def show_heatmap(W: t.Tensor) -> None:
-    fig = px.imshow((W.T @ W).detach().numpy())
+def show_heatmap(W: t.Tensor, bias: t.Tensor, type: str) -> None:
+    # W hidden_dim, dim
+    # bias dim
+    sup_matrix = W.T @ W  # dim, dim
+    bias = bias.unsqueeze(1)  # 1, dim
+    zeros = t.zeros_like(bias)  # 1, dim
+    data = t.cat([sup_matrix, zeros, bias], dim=1)  # dim, dim + 2
+    fig = make_subplots(
+        rows=1,
+        cols=1,
+        # row_titles= ...
+    )
+    fig.add_trace(
+        px.imshow(
+            data.detach().numpy(),
+            # title=f"W.T @ W for {type} model, S = {SPARSITY}",
+        ).data[0],
+        row=1,
+        col=1,
+    )
     fig.show()
 
 
@@ -78,10 +94,16 @@ def show_heatmap(W: t.Tensor) -> None:
 model = LinearModel()
 model = train_model(model, x)
 W = model.W
-show_heatmap(W)
+show_heatmap(W, model.bias, "linear")
 
 # ReLU Model
 model = ReLUModel()
 model = train_model(model, x)
 W = model.linear_model.W
-show_heatmap(W)
+show_heatmap(W, model.linear_model.bias, "relu")
+
+# fig = px.imshow(
+#     model.linear_model.bias.unsqueeze(0).detach().numpy(),
+#     title=f"Bias for ReLU model, S = {SPARSITY}",
+# )
+# fig.show()
