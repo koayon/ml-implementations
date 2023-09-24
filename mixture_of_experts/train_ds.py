@@ -15,9 +15,9 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
     router_z_loss_func,
 )
 
+from data.tiny_stories import TinyStoriesDataset
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from optimisers.adam import Adam
 from optimisers.sgd import SGD
 from optimisers.sophia import Sophia
@@ -69,6 +69,7 @@ class ShakespeareDataset(Dataset):
 
 class Trainer:
     Optimiser: Optimizer
+    model_engine: deepspeed.DeepSpeedEngine
 
     def __init__(
         self,
@@ -77,7 +78,7 @@ class Trainer:
         max_iters: Optional[int] = None,
     ):
         self.model = model
-        self.model_engine = None
+        # self.model_engine = deepspeed.DeepSpeedEngine()
         self.config = config
         if max_iters:
             self.config.max_steps = max_iters
@@ -109,7 +110,7 @@ class Trainer:
         """Convert a dataset to a dataloader."""
         return DataLoader(
             dataset,
-            sampler=RandomSampler(dataset, replacement=True)
+            sampler=RandomSampler(dataset, replacement=True)  # type: ignore
             if random_sampler
             else None,
             batch_size=self.config.batch_size,
@@ -213,7 +214,7 @@ class Trainer:
             _lr_scheduler,
         ) = deepspeed.initialize(
             model=self.model,
-            model_parameters=self.model.parameters(),
+            model_parameters=self.model.parameters(),  # type: ignore
             config=ds_config,
             optimizer=None,
             training_data=None,
@@ -272,6 +273,7 @@ class Trainer:
                         f"Epoch: {epoch}, Batch: {sample_batch_num}, Test Loss: {test_loss}"
                     )
 
+        self.model_engine: deepspeed.DeepSpeedEngine = model_engine
         return model_engine
 
     def save_model_engine(self, model_name: str, step: int = 0) -> None:
@@ -299,7 +301,7 @@ class Trainer:
         _, client_state = self.model_engine.load_checkpoint(
             load_dir=model_dest, load_optimizer_states=load_optimizer_states
         )
-        checkpoint_step = client_state["checkpoint_step"]
+        checkpoint_step = client_state["checkpoint_step"]  # type: ignore
         print(f"Loaded model from {model_dest}")
 
     @property
@@ -313,7 +315,7 @@ def main():
 
     # Train and save the model
     trainer.model = trainer.train()
-    trainer.save_model("pytorch_adam_1000")
+    trainer.save_model_engine("pytorch_adam_1000")
 
 
 if __name__ == "__main__":

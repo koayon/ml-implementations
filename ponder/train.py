@@ -18,9 +18,9 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
 from typeguard import typechecked
 
 import wandb
+from data.tiny_stories import TinyStoriesDataset
 from gpt.config import GPTConfig
 from helpers import check_leaf_nodes
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from mixture_of_experts.train import ShakespeareDataset
 from ponder.model import PonderCache, PonderNet
 

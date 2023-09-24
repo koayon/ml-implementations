@@ -18,10 +18,10 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
 from typeguard import typechecked
 
 import wandb
+from data.tiny_stories import TinyStoriesDataset
 from mixture_of_experts.cache import ExpertChoiceFullCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer, sample_next_token
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from moet_experiment.model import MoET
 from moet_experiment.moet_config import MoETConfig
 from optimisers.adam import Adam

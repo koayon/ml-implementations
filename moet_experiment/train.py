@@ -19,10 +19,10 @@ from transformers.models.switch_transformers.modeling_switch_transformers import
 from typeguard import typechecked
 
 import wandb
+from data.tiny_stories import TinyStoriesDataset
 from mixture_of_experts.cache import ExpertChoiceFullCache
 from mixture_of_experts.config import MoEConfig
 from mixture_of_experts.model import SparseMoETransformer, sample_next_token
-from mixture_of_experts.tiny_stories import TinyStoriesDataset
 from moet_experiment.model import MoET
 from moet_experiment.moet_config import MoETConfig
 from optimisers.adam import Adam
@@ -92,7 +92,7 @@ class Trainer:
     def get_text_data(
         self,
         data_source: str = "data/tiny_shakespeare.txt",
-        tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained("gpt2"),
     ) -> Tuple[t.Tensor, t.Tensor]:
         """Get the text dataset (Shakespeare)."""
 
@@ -100,8 +100,7 @@ class Trainer:
         with open(data_source, "r") as f:
             text = f.read()
 
-
-        tokenised_text = tokenizer(text, return_tensors = "pt")  # list of ints
+        tokenised_text = tokenizer(text, return_tensors="pt")  # list of ints
         full_data = t.tensor(tokenised_text, dtype=t.long, device=device)  # len_of_text
 
         # Split into train and test sets
@@ -150,7 +149,7 @@ class Trainer:
     def get_tiny_shakespeare_dataset(self) -> Tuple[DataLoader, DataLoader]:
         # Get dataset
         tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer_string)
-        train_data, test_data = self.get_text_data(tokenizer = tokenizer)
+        train_data, test_data = self.get_text_data(tokenizer=tokenizer)
         train_dataset = ShakespeareDataset(
             train_data, block_size=self.config.block_size
         )
@@ -365,7 +364,6 @@ class Trainer:
                             model_name=f"{self.model_name}/checkpoint_{sample_batch_num}",
                         )
                         print(f"New best loss: {best_loss}. Checkpoint saved")
-
 
         return model
 
