@@ -1,6 +1,6 @@
 import torch as t
 
-from superposition.models import MLP, HiddenReLUModel, Model
+from superposition.models import MLP
 from superposition.plotting import show_heatmap
 from superposition.train import train_model
 

@@ -1,14 +1,8 @@
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import torch as t
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from einops import einsum
 
 from superposition.models import ReLUModel
-from superposition.plotting import show_heatmap
 from superposition.train import train_model
 
 SPARSITY = 0.75

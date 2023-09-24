@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import plotly.express as px
 import torch as t
 

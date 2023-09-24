@@ -1,12 +1,4 @@
-from typing import Union
-
-import plotly.express as px
 import torch as t
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from einops import einsum
-from plotly.subplots import make_subplots
 
 from superposition.models import LinearModel, Model, ReLUModel
 from superposition.plotting import show_heatmap
