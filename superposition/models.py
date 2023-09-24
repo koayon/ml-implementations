@@ -80,6 +80,7 @@ class MLP(nn.Module):
         self.W1 = self.linear1.weight
         self.W2 = self.linear2.weight
         self.bias = self.linear2.bias
+        self.W = self.W1
 
     def forward(self, x):
         x_prime = self.linear1(x)
@@ -89,4 +90,4 @@ class MLP(nn.Module):
         return x_pred
 
 
-Model = Union[LinearModel, ReLUModel, HiddenReLUModel]
+Model = Union[LinearModel, ReLUModel, HiddenReLUModel, MLP]

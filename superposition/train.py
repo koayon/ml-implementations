@@ -14,6 +14,7 @@ def train_model(
     importances: t.Tensor,
     verbose: bool = True,
     max_steps=200,
+    abs_loss: bool = False,
 ) -> Tuple[Model, float]:
     """Run training loop for model"""
 
@@ -25,6 +26,8 @@ def train_model(
     for epoch in range(max_steps):
         optimizer.zero_grad()
         x_preds = model(x)
+        if abs_loss:
+            x = t.abs(x)
         loss = importance_loss(x, x_preds)
         loss.backward()
         optimizer.step()

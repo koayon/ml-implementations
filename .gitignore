@@ -172,3 +172,4 @@ scratch/
 checkpoints/
 runs.csv
 evals.csv
+superposition/figures
