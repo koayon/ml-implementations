@@ -89,4 +89,16 @@ class MLP(nn.Module):
         return x_pred
 
 
-Model = Union[LinearModel, ReLUModel, HiddenReLUModel, MLP]
+class MoE(nn.Module):
+    """A minimal MoE with a linear router and a two MLP experts"""
+
+    def __init__(self, dim: int, hidden_dim: int, num_experts: int = 2):
+        super().__init__()
+        self.linear_router = nn.Linear(dim, num_experts, bias=False)
+        self.mlp1 = MLP(dim, hidden_dim)
+        self.mlp2 = MLP(dim, hidden_dim)
+        self.W = self.linear_router.weight
+        self.bias = self.linear_router.bias
+
+
+Model = Union[LinearModel, ReLUModel, HiddenReLUModel, MLP, MoE]
