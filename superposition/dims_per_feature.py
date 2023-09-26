@@ -86,7 +86,7 @@ for col in df.columns:
         continue
     df[col] = df.rolling(window=10).mean()[col]
 
-# print(df)
+print(df)
 
 fig = px.line(
     df,
@@ -107,13 +107,13 @@ fig = px.line(
 )
 fig.show()
 
-# Create table
-fig = go.Figure(
-    data=[
-        go.Table(
-            header=dict(values=list(df.columns)),
-            cells=dict(values=df.T.values.tolist()),
-        )
-    ]
-)
-fig.show()
+# # Create table
+# fig = go.Figure(
+#     data=[
+#         go.Table(
+#             header=dict(values=list(df.columns)),
+#             cells=dict(values=df.T.values.tolist()),
+#         )
+#     ]
+# )
+# fig.show()

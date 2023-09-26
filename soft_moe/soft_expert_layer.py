@@ -5,9 +5,7 @@ from einops import einsum, rearrange, repeat
 from torch import nn
 
 from general import device
-from general.norms import RMSNorm
-from general.swiglu_ffn import SwiGLUFFN
-from mixture_of_experts.cache import MoECache, MoELayerCache, SoftTokenMergeLayerCache
+from mixture_of_experts.cache import MoELayerCache, SoftTokenMergeLayerCache
 from moet_experiment.group_moe_layer import get_experts
 from moet_experiment.moet_config import MoETConfig
 
