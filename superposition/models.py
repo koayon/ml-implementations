@@ -126,3 +126,45 @@ class MoE(nn.Module):
         y = y_prime_1 + y_prime_2
 
         return y
+
+
+class SoftMoE(nn.Module):
+    """A minimal Soft-MoE with a linear router, two MLP experts batch/2 slots each."""
+
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int,
+        experts: list[nn.Module],
+        num_experts: int = 2,
+        batch_size=2000,
+    ):
+        super().__init__()
+        self.num_experts = num_experts
+
+        assert self.num_experts == len(experts)
+
+        self.linear_router = nn.Linear(dim, num_experts, bias=True)
+        self.experts = experts
+        self.mlp2 = MLP(dim, hidden_dim)
+
+        self.W = self.linear_router.weight
+        self.bias = self.linear_router.bias
+
+    def forward(self, x):
+        router_logits = self.linear_router(x)  # batch, num_experts
+        router_probs = t.softmax(router_logits, dim=1)  # batch, num_experts
+
+        E = [self.experts[0](x), self.experts[1](x)]
+        E = t.stack(E, dim=1)  # batch, num_experts, dim
+
+        y = einsum(
+            router_probs,
+            E,
+            "batch expert, batch expert dim -> batch dim",
+        )  # batch, dim
+
+        return y
+
+
+Model = Union[LinearModel, ReLUModel, HiddenReLUModel, MLP, MoE, SoftMoE]
