@@ -2,7 +2,7 @@ from typing import Union
 
 import torch as t
 import torch.nn as nn
-from einops import einsum
+from einops import einsum, rearrange
 
 
 class LinearModel(nn.Module):
@@ -90,15 +90,39 @@ class MLP(nn.Module):
 
 
 class MoE(nn.Module):
-    """A minimal MoE with a linear router and a two MLP experts"""
+    """A minimal MoE with a linear router, two MLP experts batch/2 slots each.
+    Here k is such that we can use every expert as much as we want."""
 
-    def __init__(self, dim: int, hidden_dim: int, num_experts: int = 2):
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int,
+        experts: list[nn.Module],
+        num_experts: int = 2,
+        batch_size=2000,
+    ):
         super().__init__()
-        self.linear_router = nn.Linear(dim, num_experts, bias=False)
-        self.mlp1 = MLP(dim, hidden_dim)
+        self.num_experts = num_experts
+
+        assert self.num_experts == len(experts)
+
+        self.linear_router = nn.Linear(dim, num_experts, bias=True)
+        self.experts = experts
         self.mlp2 = MLP(dim, hidden_dim)
+
         self.W = self.linear_router.weight
         self.bias = self.linear_router.bias
 
+    def forward(self, x):
+        router_logits = self.linear_router(x)  # batch, num_experts
+        router_probs = t.softmax(router_logits, dim=0)  # batch, num_experts
 
-Model = Union[LinearModel, ReLUModel, HiddenReLUModel, MLP, MoE]
+        expert1_tokens = (router_probs[:, 0].unsqueeze(1) > 0.5) * x
+        expert2_tokens = (router_probs[:, 1].unsqueeze(1) > 0.5) * x
+
+        y_prime_1 = self.experts[0](expert1_tokens) * router_probs[:, 0].unsqueeze(1)
+        y_prime_2 = self.experts[1](expert2_tokens) * router_probs[:, 1].unsqueeze(1)
+
+        y = y_prime_1 + y_prime_2
+
+        return y
