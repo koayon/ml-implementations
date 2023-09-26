@@ -34,6 +34,7 @@ def get_experts(
     group_size: int,
     dropout: float,
     act_fn: nn.Module = nn.SiLU(),
+    share_up_proj: bool = False,
 ) -> ExpertList:
     """
     Create a list of expert modules based on the given parameters. The experts in the same group share the same down layer.
@@ -50,6 +51,9 @@ def get_experts(
         experts (nn.ModuleList): A list of expert modules that can be used for further computations.
     """
     assert num_experts % group_size == 0
+
+    if share_up_proj:
+        raise NotImplementedError("share_up_proj not implemented")
 
     num_expert_groups = num_experts // group_size
 

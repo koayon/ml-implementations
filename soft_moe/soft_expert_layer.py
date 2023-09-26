@@ -30,7 +30,6 @@ class SoftExpertLayer(nn.Module):
     ) -> None:
         super().__init__()
 
-
         self.slots_per_expert = slots_per_expert
 
         self.num_experts = num_experts
@@ -49,8 +48,6 @@ class SoftExpertLayer(nn.Module):
             group_size=group_size,
             dropout=config.expert_dropout,
         )
-
-
 
     def forward(
         self, x: t.Tensor, routing_logits: t.Tensor
@@ -81,24 +78,58 @@ class SoftExpertLayer(nn.Module):
         assert routing_logits.shape == (bs, self.num_experts, self.slots_per_expert)
         # Routing logits are called phi in the paper # (b s) num_experts slots
 
-        # Dispatch weights
-        D = t.softmax(routing_logits, dim=-1)  # bs num_experts slots
-        # Combine weights
-        C = t.softmax(routing_logits, dim = 0) # bs num_experts slots
+        # Rearrange routing logits to ensure we don't share information across the batch dim.
+        routing_logits = rearrange(
+            routing_logits,
+            "(batch seq) num_experts slots -> batch seq (num_experts slots)",
+        )
 
-        layer_cache = SoftTokenMergeLayerCache(D = D, C = C, routing_logits= routing_logits)
+        # Define Dispatch weights (D), softmax over columns of X @ phi, mixing tokens
+        dispatch_weights = t.softmax(
+            routing_logits, dim=1
+        )  # batch seq (num_experts slots)
+        dispatch_weights = rearrange(
+            dispatch_weights,
+            "batch seq (num_experts slots) -> (batch seq) num_experts slots",
+            slots=self.slots_per_expert,
+        )
+
+        # Define Combine weights (C), softmax over rows of X @ phi, mixing expert slots
+        combine_weights = t.softmax(
+            routing_logits, dim=-1
+        )  # batch seq (num_experts slots)
+        combine_weights = rearrange(
+            combine_weights,
+            "batch seq (num_experts slots) -> (batch seq) num_experts slots",
+            slots=self.slots_per_expert,
+        )
+
+        layer_cache = SoftTokenMergeLayerCache(
+            D=dispatch_weights, C=combine_weights, routing_logits=routing_logits
+        )
 
         # Get the weighted averaged X for each slot. This is the input to the experts
-        x_tilda = einsum(D, x, "bs num_experts slots, bs hidden_size -> num_experts slots hidden_size")
+        x_tilda = einsum(
+            dispatch_weights,
+            x,
+            "bs num_experts slots, bs hidden_size -> num_experts slots hidden_size",
+        )
 
         # USE EXPERTS
         # forward the relevant tokens through the relevant expert
         # E_list is denoted y_tilda in the paper
-        E_list = [self.experts[expert_num](x_tilda[expert_num]) for expert_num in range(self.num_experts)]  # num_experts list[slots hidden_size]
+        E_list = [
+            self.experts[expert_num](x_tilda[expert_num])
+            for expert_num in range(self.num_experts)
+        ]  # num_experts list[slots hidden_size]
 
         E = t.stack(E_list, dim=0)  # num_experts slots hidden_size
 
         # Combine the outputs of the experts with the weights from the router to get the final output with the correct shapes
-        y = einsum(C, E, "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size")
+        y = einsum(
+            combine_weights,
+            E,
+            "bs num_experts slots, num_experts slots hidden_size -> bs hidden_size",
+        )
 
         return y, layer_cache

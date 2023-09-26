@@ -39,9 +39,7 @@ class ExpertChoiceFFN(nn.Module):
         self.num_experts = config.num_experts
         self.layer_id = layer_id
 
-        self.router = router or nn.Linear(
-            self.hidden_size, self.num_experts
-        )
+        self.router = router or nn.Linear(self.hidden_size, self.num_experts)
 
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
@@ -126,10 +124,7 @@ class ExpertChoiceFFN(nn.Module):
         G, chosen_token_index = t.topk(S, k=self.k, dim=0)  # k num_experts each
 
         layer_cache = ExpertChoiceLayerCache(
-            G=G,
-            token_assignments=chosen_token_index,
-            routing_logits=h,
-            # P = P
+            G=G, token_assignments=chosen_token_index, routing_logits=h, P=P
         )
 
         # Collect expert results from parallelised expert forward
