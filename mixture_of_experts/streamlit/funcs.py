@@ -2,11 +2,12 @@ from functools import partial
 from typing import List, Optional, Tuple
 
 import torch as t
+from plotly.graph_objs._figure import Figure
 from torch import nn
 from transformers import AutoTokenizer
 
 from mixture_of_experts.cache import ExpertChoiceFullCache
-from mixture_of_experts.interp import tokens_processed_by_expert
+from mixture_of_experts.interp import affinities_heatmap, tokens_processed_by_expert
 
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
@@ -27,14 +28,15 @@ def generate_output_visual(
     model: nn.Module,
     expert1: Tuple[str, int],
     expert2: Optional[Tuple[str, int]] = None,
-) -> str:
+) -> Tuple[str, dict[str, Figure]]:
     # Forward model
     input_tokens = t.tensor(
         tokenizer(input_str, return_tensors="pt")["input_ids"]
     )  # 1, seq_len
 
     cache: ExpertChoiceFullCache
-    model.train()
+
+    model.eval()
     _, cache = model(input_tokens)
 
     # Get tokens processed by expert
@@ -82,4 +84,7 @@ def generate_output_visual(
             colour_text(token_str, text_col) if text_col else token_str
         )
 
-    return "".join(coloured_tokens)
+    # Get layer affinities heatmaps
+    figs = affinities_heatmap(cache)
+
+    return "".join(coloured_tokens), figs

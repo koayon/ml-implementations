@@ -33,6 +33,9 @@ MODEL_DICT = {
 }
 st.session_state["model"] = MODEL_DICT["moet"]
 
+if "submit_button" not in st.session_state:
+    st.session_state["submit_button"] = False
+
 
 def set_model(model_name) -> None:
     st.session_state["model"] = MODEL_DICT[model_name]
@@ -56,15 +59,26 @@ with st.sidebar:
 input_str = st.text_input(label="Enter some text here", value=MILEY)
 
 submit_button = st.button("Submit")
-
 if submit_button:
+    st.session_state["submit_button"] = True
+
+if st.session_state["submit_button"]:
     LAYER_INDEX = "moe_block_early2"
-    coloured_text = generate_output_visual(
+    coloured_text, figs = generate_output_visual(
         expert1=(LAYER_INDEX, 0),
         expert2=(LAYER_INDEX, 1),
         model=st.session_state["model"],
         input_str=input_str,
     )
 
+    st.session_state["coloured_text_output"] = coloured_text
+
     st.subheader("Output")
-    st.write(coloured_text, unsafe_allow_html=True)
+    st.write(st.session_state["coloured_text_output"], unsafe_allow_html=True)
+
+    selected_affinity_map = st.selectbox(
+        label="Select a layer to examine the expert affinities", options=figs
+    )
+    st.session_state["selected_affinity_map"] = selected_affinity_map
+    if st.session_state["selected_affinity_map"]:
+        st.plotly_chart(figs[st.session_state["selected_affinity_map"]])
