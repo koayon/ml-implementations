@@ -86,6 +86,41 @@ def expert_importance(cache: ExpertChoiceFullCache) -> t.Tensor:
     return importance
 
 
+def importance_chart(
+    importance: t.Tensor, layer_indices: list[str]
+) -> dict[str, Figure]:
+    """
+    Creates a bar chart showing the importance of each expert in each layer.
+
+    Parameters
+    ----------
+    importance : torch.Tensor
+        A tensor of shape (layer, num_experts) representing the importance of each expert in each layer.
+    layer_indices : list[str]
+        The indices of the layers.
+
+    Returns
+    -------
+    Figure
+        A bar chart showing the importance of each expert in each layer.
+    """
+    num_expert_layers, num_experts = importance.shape
+
+    assert num_expert_layers == len(layer_indices)
+
+    figs = {}
+
+    for idx, layer_index in enumerate(layer_indices):
+        fig = px.bar(
+            x=range(num_experts),
+            y=importance[idx].tolist(),
+            title=f"Layer {layer_index} Importance",
+        )
+        figs[layer_index] = fig
+
+    return figs
+
+
 def tokens_processed_by_expert(
     cache: ExpertChoiceFullCache,
     layer_index: str,
