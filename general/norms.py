@@ -178,3 +178,40 @@ class GroupRMSNorm(nn.Module):
         x_norm = t.cat(group_norms, dim=1)
 
         return x_norm
+
+
+class L2LayerNorm(nn.Module):
+    """LayerNorm implementation as given in Soft-MoE paper.
+    This is to help with keeping the same hyperparameters as we scale up the model size.
+
+    In the router logits calculation they replace X with l2_norm(X) and Phi with scale*l2_norm(Phi), where scale is a learned scalar parameter.
+    """
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.dim = dim
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        """
+        x: (batch channels *other_dims)
+        Return: shape(batch channels *other_dims)
+        """
+
+        sum_of_squares = t.sum(x**2, dim=self.dim, keepdim=True)
+        norm = t.sqrt(sum_of_squares)
+
+        out = x / (norm + self.eps)
+        return out
+
+
+def l2_norm(x: t.Tensor, dim: int, eps: float = 1e-6) -> t.Tensor:
+    """L2 Norm of a tensor along a dimension.
+    x: shape(*other_dims)
+    Return: shape(*other_dims)
+    """
+    sum_of_squares = t.sum(x**2, dim=dim, keepdim=True)
+    norm = t.sqrt(sum_of_squares)
+
+    out = x / (norm + eps)
+    return out
