@@ -203,6 +203,30 @@ def expert_affinity(
     return affinity
 
 
+def affinities_heatmap(cache: ExpertChoiceFullCache) -> dict[str, Figure]:
+    figs = {}
+    for layer_index in cache.layer_indices:
+        num_experts = cache.num_experts
+        expert_affinities = np.zeros((num_experts, num_experts))
+
+        for expert_num_1 in range(num_experts):
+            for expert_num_2 in range(num_experts):
+                expert_1 = (layer_index, 0, expert_num_1)
+                expert_2 = (layer_index, 0, expert_num_2)
+                affinity = expert_affinity(expert_1, expert_2, cache)
+                expert_affinities[expert_num_1, expert_num_2] = affinity
+
+        fig = px.imshow(
+            expert_affinities,
+            x=[f"expert_{i}" for i in range(num_experts)],
+            y=[f"expert_{i}" for i in range(num_experts)],
+            title=f"Affinities for layer {layer_index}",
+        )
+        figs[layer_index] = fig
+
+    return figs
+
+
 def expert_weights_similarity(
     expert_1: Tuple[str, int, int], expert_2: Tuple[str, int, int], model: MoET
 ) -> float:
