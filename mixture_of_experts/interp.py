@@ -3,10 +3,12 @@ from typing import Iterable, List, Optional, OrderedDict, Protocol, Tuple
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import tiktoken
 import torch as t
 from einops import rearrange, repeat
 from jaxtyping import Float, Int
+from plotly.graph_objs._figure import Figure
 from torch import nn
 
 from helpers import einsum
@@ -47,7 +49,7 @@ def token_path(cache: ExpertChoiceFullCache, token_num: int) -> dict:
 
     # Get the routing matrix for the token
     weighted_token_assignment = G * P_token  # layer, num_experts, k
-    out, _ = weighted_token_assignment.max(dim=1) # layer, num_experts
+    out, _ = weighted_token_assignment.max(dim=1)  # layer, num_experts
 
     array = np.array(out)  # num_expert_layer, num_experts
     _num_expert_layers, num_experts = array.shape
@@ -130,7 +132,9 @@ def tokens_processed_by_expert(
 
 
 def expert_token_table(
-    cache: ExpertChoiceFullCache, input: t.Tensor, tokeniser: tiktoken.Encoding = tokeniser
+    cache: ExpertChoiceFullCache,
+    input: t.Tensor,
+    tokeniser: tiktoken.Encoding = tokeniser,
 ) -> pd.DataFrame:
     layer_indexes = []
     expert_nums = []
@@ -158,7 +162,12 @@ def expert_token_table(
     )
     return df
 
-def expert_affinity(expert_1: Tuple[str, int, int], expert_2: Tuple[str, int, int], cache: ExpertChoiceFullCache) -> float:
+
+def expert_affinity(
+    expert_1: Tuple[str, int, int],
+    expert_2: Tuple[str, int, int],
+    cache: ExpertChoiceFullCache,
+) -> float:
     """Measures the affinity of two experts by calculating the number of tokens which are routed to both experts.
 
     Can either pick experts in different layers to understand compositionality or experts within the same layer to understand parallel computation.
@@ -182,18 +191,21 @@ def expert_affinity(expert_1: Tuple[str, int, int], expert_2: Tuple[str, int, in
     expert_1_tokens, _ = tokens_processed_by_expert(cache, layer_index_1, expert_num_1)
     expert_2_tokens, _ = tokens_processed_by_expert(cache, layer_index_2, expert_num_2)
 
-
     # Get the number of tokens routed to both experts
     num_tokens_1 = len(expert_1_tokens)
     num_tokens_2 = len(expert_2_tokens)
     num_tokens_both = len(set(expert_1_tokens).intersection(expert_2_tokens))
 
     # Calculate the affinity
-    affinity = num_tokens_both / (num_tokens_1 + num_tokens_2 - num_tokens_both)
+    affinity = 3 * num_tokens_both / (num_tokens_1 + num_tokens_2 - num_tokens_both)
+    affinity = affinity ** (1 / 2)
 
     return affinity
 
-def expert_weights_similarity(expert_1: Tuple[str, int, int], expert_2: Tuple[str, int, int], model: MoET) -> float:
+
+def expert_weights_similarity(
+    expert_1: Tuple[str, int, int], expert_2: Tuple[str, int, int], model: MoET
+) -> float:
     """Get a similarity score between two experts by comparing their weights directly.
     Typically want to compare experts within the same layer.
 
@@ -214,21 +226,24 @@ def expert_weights_similarity(expert_1: Tuple[str, int, int], expert_2: Tuple[st
     layer_index_1, layer_num_1, expert_num_1 = expert_1
     layer_index_2, layer_num_2, expert_num_2 = expert_2
 
-    expert1: Expert = model.sequential_layers[layer_num_1].moe_layer.expert_layer[expert_num_1] # type: ignore
-    expert2: Expert = model.sequential_layers[layer_num_2].moe_layer.expert_layer[expert_num_2] # type: ignore
+    expert1: Expert = model.sequential_layers[layer_num_1].moe_layer.expert_layer[expert_num_1]  # type: ignore
+    expert2: Expert = model.sequential_layers[layer_num_2].moe_layer.expert_layer[expert_num_2]  # type: ignore
 
     # Get the weights (list of the weights and biases of each linear layer)
     expert1_weights = expert1.all_weights
     expert2_weights = expert2.all_weights
 
     # Calculate the similarity
-    differences = [t.norm(a - b, p='fro') for a, b in zip(expert1_weights, expert2_weights)]
+    differences = [
+        t.norm(a - b, p="fro") for a, b in zip(expert1_weights, expert2_weights)
+    ]
     differences = t.stack(differences)
     avg_difference = t.mean(differences).item()
 
     similarity = 1 - avg_difference
 
     return similarity
+
 
 def add_in_hooks(module: nn.Module, display_name: str, activations: dict) -> None:
     def fwd_hook(mod, input, output):
@@ -284,7 +299,7 @@ def logit_lens_before_and_after_expert(
     """
 
     assert layer_index % 2 == 0, "Only works for MoE layers"
-    #TODO: ^Generalise
+    # TODO: ^Generalise
 
     # Add hooks
     activations: dict[str, Float[t.Tensor, "batch, seq, hidden"]] = {}
