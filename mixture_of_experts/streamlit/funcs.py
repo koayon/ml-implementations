@@ -7,7 +7,12 @@ from torch import nn
 from transformers import AutoTokenizer
 
 from mixture_of_experts.cache import ExpertChoiceFullCache
-from mixture_of_experts.interp import affinities_heatmap, tokens_processed_by_expert
+from mixture_of_experts.interp import (
+    affinities_heatmap,
+    expert_importance,
+    importance_chart,
+    tokens_processed_by_expert,
+)
 
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
 
@@ -23,12 +28,12 @@ def colour_text(word, colour) -> str:
 
 
 @t.no_grad()
-def generate_output_visual(
+def generate_output_visuals(
     input_str: str,
     model: nn.Module,
     expert1: Tuple[str, int],
     expert2: Optional[Tuple[str, int]] = None,
-) -> Tuple[str, dict[str, Figure]]:
+) -> Tuple[str, dict[str, Figure], dict[str, Figure]]:
     # Forward model
     input_tokens = t.tensor(
         tokenizer(input_str, return_tensors="pt")["input_ids"]
@@ -85,6 +90,11 @@ def generate_output_visual(
         )
 
     # Get layer affinities heatmaps
-    figs = affinities_heatmap(cache)
+    affinities_figs = affinities_heatmap(cache)
 
-    return "".join(coloured_tokens), figs
+    importance = expert_importance(cache)
+    importance_figs = importance_chart(
+        importance=importance, layer_indices=cache.layer_indices
+    )
+
+    return "".join(coloured_tokens), affinities_figs, importance_figs
