@@ -31,7 +31,10 @@ MODEL_DICT = {
     "tiny_moe": None,
     "moet": MoET(use_expert_choice=True),
 }
-st.session_state["model"] = MODEL_DICT["moet"]
+if "model" not in st.session_state:
+    st.session_state["model"] = MODEL_DICT["moet"]
+if "input_str" not in st.session_state:
+    st.session_state["input_str"] = ""
 
 if "submit_button" not in st.session_state:
     st.session_state["submit_button"] = False
@@ -64,32 +67,47 @@ if submit_button:
 
 if st.session_state["submit_button"]:
     LAYER_INDEX = "moe_block_early2"
-    (
-        coloured_text,
-        affinities_figs,
-        importance_figs,
-        tokens_processed_figs,
-    ) = generate_output_visuals(
-        expert1=(LAYER_INDEX, 0),
-        expert2=(LAYER_INDEX, 1),
-        model=st.session_state["model"],
-        input_str=input_str,
-    )
-
-    st.session_state["coloured_text_output"] = coloured_text
+    if input_str != st.session_state["input_str"]:
+        st.session_state["input_str"] = input_str
+        (
+            coloured_text,
+            affinities_figs,
+            importance_figs,
+            tokens_processed_figs,
+        ) = generate_output_visuals(
+            expert1=(LAYER_INDEX, 0),
+            expert2=(LAYER_INDEX, 1),
+            model=st.session_state["model"],
+            input_str=input_str,
+        )
+        st.session_state["coloured_text_output"] = coloured_text
+        st.session_state["affinities_figs"] = affinities_figs
+        st.session_state["importance_figs"] = importance_figs
+        st.session_state["tokens_processed_figs"] = tokens_processed_figs
 
     st.subheader("Output")
     st.write(st.session_state["coloured_text_output"], unsafe_allow_html=True)
 
     selected_affinity_map = st.selectbox(
-        label="Select a layer to examine the expert affinities", options=affinities_figs
+        label="Select a layer to examine the expert affinities",
+        options=st.session_state["affinities_figs"],
     )
     st.session_state["selected_affinity_map"] = selected_affinity_map
     if st.session_state["selected_affinity_map"]:
-        st.plotly_chart(affinities_figs[st.session_state["selected_affinity_map"]])
-
-        st.plotly_chart(importance_figs[st.session_state["selected_affinity_map"]])
+        st.plotly_chart(
+            st.session_state["affinities_figs"][
+                st.session_state["selected_affinity_map"]
+            ]
+        )
 
         st.plotly_chart(
-            tokens_processed_figs[st.session_state["selected_affinity_map"]]
+            st.session_state["importance_figs"][
+                st.session_state["selected_affinity_map"]
+            ]
+        )
+
+        st.plotly_chart(
+            st.session_state["tokens_processed_figs"][
+                st.session_state["selected_affinity_map"]
+            ]
         )
