@@ -26,6 +26,16 @@ def load_pretrained_gpt() -> GPT2LMHeadModel:
     return transformers.AutoModelForCausalLM.from_pretrained("gpt2")
 
 
+@mem.cache
+def load_pretrained_gpt_large() -> GPT2LMHeadModel:
+    """Load the HuggingFace GPT-2 Large.
+
+    On first use this downloads from the Internet.
+    Later uses should hit the cache and take under 1s to load.
+    """
+    return transformers.AutoModelForCausalLM.from_pretrained("gpt2-large")
+
+
 def assert_all_equal(actual: t.Tensor, expected: t.Tensor) -> None:
     """Assert that actual and expected are exactly equal (to floating point precision)."""
     mask = actual == expected
