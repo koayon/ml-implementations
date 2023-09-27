@@ -64,7 +64,12 @@ if submit_button:
 
 if st.session_state["submit_button"]:
     LAYER_INDEX = "moe_block_early2"
-    coloured_text, affinities_figs, importance_figs = generate_output_visuals(
+    (
+        coloured_text,
+        affinities_figs,
+        importance_figs,
+        tokens_processed_figs,
+    ) = generate_output_visuals(
         expert1=(LAYER_INDEX, 0),
         expert2=(LAYER_INDEX, 1),
         model=st.session_state["model"],
@@ -84,3 +89,7 @@ if st.session_state["submit_button"]:
         st.plotly_chart(affinities_figs[st.session_state["selected_affinity_map"]])
 
         st.plotly_chart(importance_figs[st.session_state["selected_affinity_map"]])
+
+        st.plotly_chart(
+            tokens_processed_figs[st.session_state["selected_affinity_map"]]
+        )

@@ -12,6 +12,7 @@ from mixture_of_experts.interp import (
     expert_importance,
     importance_chart,
     tokens_processed_by_expert,
+    tokens_processed_nums,
 )
 
 tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories-8M")
@@ -33,7 +34,7 @@ def generate_output_visuals(
     model: nn.Module,
     expert1: Tuple[str, int],
     expert2: Optional[Tuple[str, int]] = None,
-) -> Tuple[str, dict[str, Figure], dict[str, Figure]]:
+) -> Tuple[str, dict[str, Figure], dict[str, Figure], dict[str, Figure]]:
     # Forward model
     input_tokens = t.tensor(
         tokenizer(input_str, return_tensors="pt")["input_ids"]
@@ -97,4 +98,11 @@ def generate_output_visuals(
         importance=importance, layer_indices=cache.layer_indices
     )
 
-    return "".join(coloured_tokens), affinities_figs, importance_figs
+    tokens_processed_figs = tokens_processed_nums(cache)
+
+    return (
+        "".join(coloured_tokens),
+        affinities_figs,
+        importance_figs,
+        tokens_processed_figs,
+    )
