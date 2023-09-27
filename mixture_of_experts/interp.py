@@ -246,8 +246,6 @@ def tokens_processed_nums(cache: ExpertChoiceFullCache) -> dict[str, Figure]:
         counts_dict = Counter(processed_counts)
         df = pd.DataFrame(counts_dict.items(), columns=["num_times", "count"])
 
-        print(counts_dict)
-
         fig = px.bar(
             df,
             x="num_times",
@@ -358,7 +356,11 @@ def expert_weights_similarity(
     differences = [
         t.norm(a - b, p="fro") for a, b in zip(expert1_weights, expert2_weights)
     ]
-    differences = t.stack(differences)
+    norms = [
+        t.norm(a, p="fro") * t.norm(b, p="fro")
+        for a, b in zip(expert1_weights, expert2_weights)
+    ]
+    differences = t.stack(differences) / t.stack(norms)
     avg_difference = t.mean(differences).item()
 
     similarity = 1 - avg_difference
