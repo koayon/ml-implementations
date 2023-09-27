@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import Iterable, List, Optional, OrderedDict, Protocol, Tuple
 
 import numpy as np
@@ -196,6 +197,67 @@ def expert_token_table(
         }
     )
     return df
+
+
+def num_times_token_processed(
+    batch_seq_num: int, cache: ExpertChoiceFullCache, layer_index: str
+) -> int:
+    """
+    Returns the number of times a token was routed to an expert.
+
+    Parameters
+    ----------
+    batch_seq_num : int
+        The index of the token in the batch and sequence.
+    cache : MoEFullCache
+        The cache of expert routing.
+
+    Returns
+    -------
+    int
+        The number of times the token was routed to an expert.
+    """
+    layer_cache = cache[layer_index]
+    out = t.sum(layer_cache.token_assignments == batch_seq_num).item()
+    return int(out)
+
+
+def tokens_processed_nums(cache: ExpertChoiceFullCache) -> dict[str, Figure]:
+    """
+    Returns the number of times each token was routed to an expert.
+
+    Parameters
+    ----------
+    cache : MoEFullCache
+        The cache of expert routing.
+
+    Returns
+    -------
+    list[int]
+        The number of times each token was routed to an expert.
+    """
+    batch_seq_len = cache.P.shape[2]
+    figs = {}
+    for layer_index in cache.layer_indices:
+        processed_counts = []
+        for i in range(batch_seq_len):
+            processed_counts.append(num_times_token_processed(i, cache, layer_index))
+
+        counts_dict = Counter(processed_counts)
+        df = pd.DataFrame(counts_dict.items(), columns=["num_times", "count"])
+
+        print(counts_dict)
+
+        fig = px.bar(
+            df,
+            x="num_times",
+            y="count",
+            title=f"Number of tokens routed to n experts for layer {layer_index}",
+        )
+
+        figs[layer_index] = fig
+
+    return figs
 
 
 def expert_affinity(
