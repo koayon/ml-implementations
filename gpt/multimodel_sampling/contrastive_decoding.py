@@ -24,6 +24,12 @@ helper_model = load_pretrained_gpt()
 
 
 class ContrastiveDecodingWrapper(PreTrainedModel):
+    """Contrastive Decoding approach to sampling using two models.
+
+
+    Reference: https://arxiv.org/pdf/2309.09117.pdf
+    """
+
     def __init__(
         self,
         large_model=large_model,
@@ -93,13 +99,9 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
 
         return sampled_output, greedy_output, main_output, helper_output
 
-    def generate(self, input_str: str, max_new_tokens: int = 5) -> list[str]:
-        # Tokenize input string
-        input_ids = tokenizer.encode(
-            input_str, return_tensors="pt"
-        )  # (batch_size, seq_len)
-        input_ids = t.tensor(input_ids)  # (batch_size, seq_len)
-
+    def generate(
+        self, input_ids: t.Tensor, max_new_tokens: int = 5, verbose: bool = True
+    ) -> t.Tensor:
         # Generate new tokens
         for i in range(max_new_tokens):
             sampled_new_token, _, _, _ = self._generate_one_token(
@@ -110,17 +112,35 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
             input_ids = t.cat(
                 [input_ids, sampled_new_token], dim=-1
             )  # (batch_size, seq_len + 1)
-            print(i, input_ids)
+            if verbose:
+                print(i, input_ids)
 
-        return tokenizer.batch_decode(input_ids.tolist(), skip_special_tokens=True)
+        return input_ids
 
 
 def main():
     cd_model = ContrastiveDecodingWrapper()
     print("Loaded models")
     input_str = "Hello, my name is"
-    output = cd_model.generate(input_str)
-    print(output)
+
+    # Tokenize input string
+    input_ids = tokenizer.encode(
+        input_str, return_tensors="pt"
+    )  # (batch_size, seq_len)
+    input_ids = t.tensor(input_ids)  # (batch_size, seq_len)
+
+    MODELS = {
+        "CD Model": cd_model,
+        "Large Model": large_model,
+        "Helper Model": helper_model,
+    }
+
+    for model_name, model in MODELS.items():
+        output = model.generate(input_ids)
+        print(
+            model_name,
+            tokenizer.batch_decode(output.tolist(), skip_special_tokens=True),
+        )
 
 
 if __name__ == "__main__":
