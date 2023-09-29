@@ -23,8 +23,26 @@ helper_model = load_pretrained_gpt()
 
 
 class ContrastiveDecodingWrapper(PreTrainedModel):
-    """Contrastive Decoding approach to sampling using two models.
+    """Contrastive Decoding approach to sampling using multiple helper models.
 
+    Inspired by:
+    - Contrastive Decoding: Open-ended Text Generation as Optimization
+    - Contrastive Decoding Improves Reasoning in Large Language Models
+
+    Parameters
+    ----------
+    large_model: nn.Module
+        The large model to be used for the main model.
+    helper_models: list[nn.Module]
+        The list of helper models to be used for contrastive decoding.
+    config: transformers.GPT2Config
+        The config to be used for the model.
+    alpha: float
+        The alpha value to be used for the plausibility constraint.
+    temperature: float
+        The temperature to be used for the sampling after the CD objective is applied.
+    betas: list[float]
+        The list of beta values to be used for combining the helper model logits.
 
     Reference: https://arxiv.org/pdf/2309.09117.pdf
     """
@@ -51,13 +69,31 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
         assert len(self.betas) == len(self.helper_models)
 
     def forward(self, x: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+        """_summary_
+
+        Parameters
+        ----------
+        x : t.Tensor
+            [batch size, seq len]
+
+        Returns
+        -------
+        contrastive_decoding_logits: t.Tensor
+            [batch size, vocab size]
+        final_main_logits: t.Tensor
+            [batch size, vocab size]
+        final_helper_logits: t.Tensor
+            [batch size, helper model, vocab size]
+        """
         batch_size, seq_len = x.shape
 
+        # Forward pass through models
         main_logits = self.large_model(x)["logits"]  # (batch_size, seq_len, vocab_size)
         helper_logits_list = [
             helper_model(x)["logits"] for helper_model in self.helper_models
         ]  # list[num_helper_models] (batch_size, seq_len, vocab_size)
 
+        # Combine helper model logits using beta weights
         final_helper_logit_list = [
             helper_logits[:, -1, :] for helper_logits in helper_logits_list
         ]  # list[num_helper_models] (batch_size, vocab_size)
@@ -68,26 +104,26 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
             self.betas, final_helper_logits, "helper, batch helper vocab -> batch vocab"
         )  # (batch_size, vocab_size)
 
-        # valid vocab indices (ones that the main/expert model will predict)
-        final_main_logit = main_logits[:, -1, :]  # (batch_size, vocab_size)
+        # Define the set of vaid vocab tokens using the alpha cutoff mask
+        final_main_logits = main_logits[:, -1, :]  # (batch_size, vocab_size)
         top_logit, _indices = t.max(
-            final_main_logit, dim=-1
+            final_main_logits, dim=-1
         )  # (batch_size, vocab_size)
 
-        # Alpha mask/cutoff
         cutoff = math.log(self.alpha) + top_logit  # batch_size
-        invalid_vocab_indices = final_main_logit < cutoff  # batch_size, vocab_size
+        invalid_vocab_indices = final_main_logits < cutoff  # batch_size, vocab_size
 
-        # Perform contrastive decoding - take difference between main and helper logits (scaled by beta)
+        # Perform contrastive decoding - take difference between main and helper logits (scaled by betas)
         contrastive_decoding_logits = (
             1 + sum(self.betas)
-        ) * final_main_logit - combined_helper_logits  # (batch_size, vocab_size)
+        ) * final_main_logits - combined_helper_logits  # (batch_size, vocab_size)
 
+        # Apply the plausibility constraint from the vocab mask
         contrastive_decoding_logits = t.masked_fill(
             contrastive_decoding_logits, invalid_vocab_indices, -t.inf
         )
 
-        return contrastive_decoding_logits, main_logits, final_helper_logits
+        return contrastive_decoding_logits, final_main_logits, final_helper_logits
 
     def _generate_one_token(
         self, x: t.Tensor
