@@ -13,3 +13,5 @@ def test_forward():
     x = t.tensor([[1, 2, 3, 4, 5]])
     logits, _, _ = cd_model(x)
     assert logits.shape == (1, VOCAB_SIZE)
+
+    # TODO: Add tests for using multiple helper models

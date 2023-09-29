@@ -2,6 +2,8 @@ import math
 from typing import Tuple
 
 import torch as t
+import torch.nn as nn
+from einops import einsum
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -14,9 +16,6 @@ from helpers import load_pretrained_gpt, load_pretrained_gpt_large
 # LARGE_MODEL = "gpt2-xl"
 LARGE_MODEL = "gpt2-large"
 HELPER_MODEL = "gpt2"
-
-# large_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(LARGE_MODEL)
-# helper_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(HELPER_MODEL)
 
 tokenizer = AutoTokenizer.from_pretrained(LARGE_MODEL)
 large_model = load_pretrained_gpt_large()
@@ -32,34 +31,44 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
 
     def __init__(
         self,
-        large_model=large_model,
-        helper_model=helper_model,
+        large_model: nn.Module = large_model,
+        helper_models: list[nn.Module] = [helper_model],
         config=GPT2Config(),
-        alpha=0.1,
-        temperature=1.0,
-        beta=0.5,
+        alpha: float = 0.1,
+        temperature: float = 1.0,
+        betas: list[float] = [0.5],
     ):
         super().__init__(config=config)
         self.large_model = large_model
-        self.helper_models = [helper_model]
+        self.helper_models = helper_models
         self.config = config
 
         self.temperature = temperature
 
         self.alpha = alpha
-        self.betas = [beta]
+        self.betas = t.tensor(betas)
+
+        assert len(self.betas) == len(self.helper_models)
 
     def forward(self, x: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         batch_size, seq_len = x.shape
 
         main_logits = self.large_model(x)["logits"]  # (batch_size, seq_len, vocab_size)
-        helper_logits = self.helper_models[0](x)[
-            "logits"
-        ]  # (batch_size, seq_len, vocab_size)
+        helper_logits_list = [
+            helper_model(x)["logits"] for helper_model in self.helper_models
+        ]  # list[num_helper_models] (batch_size, seq_len, vocab_size)
+
+        final_helper_logit_list = [
+            helper_logits[:, -1, :] for helper_logits in helper_logits_list
+        ]  # list[num_helper_models] (batch_size, vocab_size)
+        final_helper_logits = t.stack(
+            final_helper_logit_list, dim=1
+        )  # (batch_size, helper_model, vocab_size)
+        combined_helper_logits = einsum(
+            self.betas, final_helper_logits, "helper, batch helper vocab -> batch vocab"
+        )  # (batch_size, vocab_size)
 
         # valid vocab indices (ones that the main/expert model will predict)
-
-        final_helper_logit = helper_logits[:, -1, :]  # (batch_size, vocab_size)
         final_main_logit = main_logits[:, -1, :]  # (batch_size, vocab_size)
         top_logit, _indices = t.max(
             final_main_logit, dim=-1
@@ -72,13 +81,13 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
         # Perform contrastive decoding - take difference between main and helper logits (scaled by beta)
         contrastive_decoding_logits = (
             1 + sum(self.betas)
-        ) * final_main_logit - self.betas[0] * final_helper_logit
+        ) * final_main_logit - combined_helper_logits  # (batch_size, vocab_size)
 
         contrastive_decoding_logits = t.masked_fill(
             contrastive_decoding_logits, invalid_vocab_indices, -t.inf
         )
 
-        return contrastive_decoding_logits, main_logits, helper_logits
+        return contrastive_decoding_logits, main_logits, final_helper_logits
 
     def _generate_one_token(
         self, x: t.Tensor
