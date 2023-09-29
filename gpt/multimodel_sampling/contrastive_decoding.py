@@ -41,19 +41,19 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
     ):
         super().__init__(config=config)
         self.large_model = large_model
-        self.helper_model = helper_model
+        self.helper_models = [helper_model]
         self.config = config
 
         self.temperature = temperature
 
         self.alpha = alpha
-        self.beta = beta
+        self.betas = [beta]
 
     def forward(self, x: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         batch_size, seq_len = x.shape
 
         main_logits = self.large_model(x)["logits"]  # (batch_size, seq_len, vocab_size)
-        helper_logits = self.helper_model(x)[
+        helper_logits = self.helper_models[0](x)[
             "logits"
         ]  # (batch_size, seq_len, vocab_size)
 
@@ -71,8 +71,8 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
 
         # Perform contrastive decoding - take difference between main and helper logits (scaled by beta)
         contrastive_decoding_logits = (
-            1 + self.beta
-        ) * final_main_logit - self.beta * final_helper_logit
+            1 + sum(self.betas)
+        ) * final_main_logit - self.betas[0] * final_helper_logit
 
         contrastive_decoding_logits = t.masked_fill(
             contrastive_decoding_logits, invalid_vocab_indices, -t.inf
