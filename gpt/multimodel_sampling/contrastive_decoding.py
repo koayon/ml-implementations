@@ -44,7 +44,8 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
     betas: list[float]
         The list of beta values to be used for combining the helper model logits.
 
-    Reference: https://arxiv.org/pdf/2309.09117.pdf
+    References: https://arxiv.org/pdf/2309.09117.pdf
+    https://arxiv.org/pdf/2210.15097.pdf
     """
 
     def __init__(
@@ -68,7 +69,7 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
 
         assert len(self.betas) == len(self.helper_models)
 
-    def forward(self, x: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
+    def forward(self, input_ids: t.Tensor) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """_summary_
 
         Parameters
@@ -85,12 +86,14 @@ class ContrastiveDecodingWrapper(PreTrainedModel):
         final_helper_logits: t.Tensor
             [batch size, helper model, vocab size]
         """
-        batch_size, seq_len = x.shape
+        batch_size, seq_len = input_ids.shape
 
         # Forward pass through models
-        main_logits = self.large_model(x)["logits"]  # (batch_size, seq_len, vocab_size)
+        main_logits = self.large_model(input_ids)[
+            "logits"
+        ]  # (batch_size, seq_len, vocab_size)
         helper_logits_list = [
-            helper_model(x)["logits"] for helper_model in self.helper_models
+            helper_model(input_ids)["logits"] for helper_model in self.helper_models
         ]  # list[num_helper_models] (batch_size, seq_len, vocab_size)
 
         # Combine helper model logits using beta weights

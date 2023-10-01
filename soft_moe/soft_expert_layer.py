@@ -106,7 +106,8 @@ class SoftExpertLayer(nn.Module):
             D=dispatch_weights, C=combine_weights, routing_logits=routing_logits
         )
 
-        # Get the weighted averaged X for each slot. This is the input to the experts
+        # Get the weighted averaged X for each slot. This is the input to the experts.
+        # In other words these are the slots.
         x_tilda = einsum(
             dispatch_weights,
             x,
