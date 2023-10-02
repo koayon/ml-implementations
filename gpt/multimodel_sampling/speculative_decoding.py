@@ -3,7 +3,7 @@ from typing import Tuple
 
 import torch as t
 import torch.nn as nn
-from einops import einsum
+from einops import einsum, rearrange
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -53,7 +53,8 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         large_model: nn.Module = large_model,
         helper_model: nn.Module = helper_model,
         config=GPT2Config(),
-        # temperature: float = 1.0,
+        large_model_temperature: float = 1.0,
+        draft_model_temperature: float = 1.0,
         K: int = 4,
     ):
         super().__init__(config=config)
@@ -61,7 +62,8 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         self.helper_model = helper_model
         self.config = config
 
-        # self.temperature = temperature
+        self.large_model_temperature = large_model_temperature
+        self.draft_model_temperature = draft_model_temperature
 
     def forward(self, input_ids: t.Tensor) -> t.Tensor:
         """Forward with the main model
@@ -74,7 +76,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         """
         return self.large_model(input_ids)
 
-    def _draft_k_tokens(self, input_ids: t.Tensor, K: int) -> t.Tensor:
+    def _draft_k_tokens(self, input_ids: t.Tensor, K: int) -> Tuple[t.Tensor, t.Tensor]:
         """Small model autoregressively generates K next tokens.
 
         Parameters
@@ -86,9 +88,12 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         Returns
         -------
-        t.Tensor
+        out_ids:
             batch_size, seq_len + K
+        logits:
+            batch_size, seq_len + K, vocab_size
         """
+        y = t.empty()
 
         for i in range(K):
             # Forward pass through helper model
@@ -104,25 +109,104 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 # Early stopping if all sequences have ended
                 break
 
-        return input_ids  # [batch_size, seq_len + K]
+        draft_output_ids = input_ids
 
-    def _check_tokens(self, input_ids: t.Tensor) -> Tuple[t.Tensor, int]:
-        """Use large model to check if tokens are valid.
+        return draft_output_ids, y  # [batch_size, seq_len + K]
+
+    def _check_tokens(
+        self,
+        draft_output_ids: t.Tensor,
+        draft_model_probs: t.Tensor,
+        large_model_probs: t.Tensor,
+        pre_draft_length: int,
+    ) -> Tuple[t.Tensor, int]:
+        """Use large model to check if tokens are accepted by the rejection criteria.
         It will then keep up to before the first invalid token plus the new token from the main model.
 
         Parameters
         ----------
-        input_ids : t.Tensor
+        draft_output_ids : t.Tensor
             [batch size, seq len + K]
+        draft_model_probs : t.Tensor
+            [batch size, seq len + K, vocab_size]
+            Also called p in the paper
+        large_model_probs : t.Tensor
+            [batch size, seq len + K + 1, vocab_size]
+            Also called q in the paper
 
         Returns
         -------
-        input_ids: t.Tensor
+        accepted_output_ids: t.Tensor
             [batch size, seq len + M + 1]
         num_new_tokens_added: int
             Number of new tokens is M, where 0 <= M <= K
         """
-        raise NotImplementedError
+        batch_size, seq_len_plus_k = draft_output_ids.shape
+
+        # For now assume batch_size = 1. TODO: Generalize to batch_size > 1
+
+        # Rearrange to make it easier to gather the probabilities of the chosen tokens
+        draft_probs_rearranged = rearrange(
+            draft_model_probs, "batch seq vocab -> batch seq 1 vocab"
+        )
+        large_probs_rearranged = rearrange(
+            large_model_probs, "batch seq vocab -> batch seq 1 vocab"
+        )
+        draft_output_ids_rearranged = rearrange(
+            draft_output_ids, "batch seq -> batch seq 1 1"
+        )
+
+        # Gather the probabilities of the chosen tokens
+        chosen_token_draft_probs = draft_probs_rearranged.gather(
+            -1, draft_output_ids_rearranged
+        )  # [batch_size, seq_len + K, 1]
+        p = chosen_token_draft_probs.squeeze(-1)  # [batch_size, seq_len + K]
+
+        chosen_token_large_probs = large_probs_rearranged.gather(
+            -1, draft_output_ids_rearranged
+        )  # [batch_size, seq_len + K, 1]
+        q = chosen_token_large_probs.squeeze(-1)  # [batch_size, seq_len + K]
+
+        # p is the probability of the token from the draft model, q is the probability of the token from the large model
+
+        for i in range(pre_draft_length, seq_len_plus_k):
+            # Check if tokens are accepted
+            # Get the probability of the token from both models
+            p = chosen_token_draft_probs[:, i]  # [batch_size]
+            q = chosen_token_large_probs[:, i]  # [batch_size]
+
+            r = t.rand(1)
+
+            if r < p / q:
+                # Accept token
+                continue
+            else:
+                # Reject token
+                contrasting_model_probs = (
+                    large_model_probs[:, i, :] - draft_model_probs[:, i, :]
+                )
+                contrasting_model_probs = t.max(t.tensor(0), contrasting_model_probs)
+
+                # Sample from the contrasting model distribution
+                sampled_tokens = t.multinomial(
+                    contrasting_model_probs, num_samples=1
+                )  # [batch_size, 1]
+
+                out = t.cat(
+                    [draft_output_ids[:, :i], sampled_tokens], dim=-1
+                )  # [batch_size, seq_len + i + 1]
+                num_new_tokens_added = i - pre_draft_length + 1
+                return out, num_new_tokens_added
+
+        # If all tokens are accepted, sample from the large model distribution for the final token
+        sampled_tokens = t.multinomial(large_model_probs[:, -1, :], num_samples=1)
+
+        out = t.cat(
+            [draft_output_ids, sampled_tokens], dim=-1
+        )  # [batch_size, seq_len + K + 1]
+        num_new_tokens_added = seq_len_plus_k - pre_draft_length + 1
+
+        return out, num_new_tokens_added
 
     def generate(
         self,
@@ -152,11 +236,26 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         """
         i = 0
         while i < max_new_tokens:
+            pre_draft_length = len(input_ids)
             # Generate K tokens
-            input_ids = self._draft_k_tokens(input_ids, K)
+            draft_output_ids, draft_logits = self._draft_k_tokens(input_ids, K)
+
+            large_model_logits = self.large_model(
+                draft_output_ids
+            )  # [batch_size, seq_len + K + 1, vocab_size]
+
+            draft_model_probs = t.softmax(
+                draft_logits / self.draft_model_temperature, dim=-1
+            )  # [batch_size, seq_len + K, vocab_size]
+            large_model_probs = t.softmax(
+                large_model_logits / self.large_model_temperature, dim=-1
+            )  # [batch_size, seq_len + K + 1, vocab_size]
 
             # Check if tokens are valid and keep up to before the first invalid token plus the new token from the main model
-            input_ids, num_new_tokens_added = self._check_tokens(input_ids)
+            # TODO: Design greedy decoding version as well.
+            input_ids, num_new_tokens_added = self._check_tokens(
+                draft_output_ids, draft_model_probs, large_model_probs, pre_draft_length
+            )
             i += num_new_tokens_added
 
             if verbose:
