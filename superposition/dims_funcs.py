@@ -5,14 +5,18 @@ import torch as t
 
 def feature_dimensionalities_to_geometries(
     feature_dimensionalities_list: list[t.Tensor],
-):
-    # From paper;
+) -> dict[str, list[int]]:
+    """
+    Turns feature dimensionalities into geometries counts
+
+    From paper;
     #  No superposition if f = 1
     #  Tetrahedron if f = 3/4
     #  Triangle if f = 2/3
     #  Digon/Antipodal pair if f = 1/2
     #  Pentagon if f = 2/5
     #  Square antiprism if f = 3/8
+    """
 
     feature_dimensionalities = t.stack(
         feature_dimensionalities_list, dim=0
