@@ -3,6 +3,7 @@ from typing import Tuple
 
 import torch as t
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import einsum, rearrange
 from transformers import (
     AutoModelForCausalLM,
@@ -113,12 +114,40 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         return draft_output_ids, y  # [batch_size, seq_len + K]
 
+    @staticmethod
+    def get_num_accepted_tokens(acceptances_bool_tensor: t.Tensor):
+        """If rejections is True then acceptance is False, hence this gives the first time where acceptance is False.
+
+        Parameters
+        ----------
+        rejections_bool_tensor : t.Tensor
+            batch_size, K
+        dim : int, optional
+            _description_, by default -1
+
+        Returns
+        -------
+        first_rejection : t.Tensor
+            batch_size
+        """
+        rejections_bool_tensor = ~acceptances_bool_tensor
+
+        # This value is positive whenever there has been a rejection on the current token or before
+        cumulative_rejections_tensor = t.cumsum(rejections_bool_tensor, dim=-1)
+        # This value is true if there has been no rejections yet
+        no_rejections_yet = cumulative_rejections_tensor == 0
+
+        # This is the count of accepted tokens before the first rejection
+        out = t.sum(no_rejections_yet, dim=-1)  # [batch_size]
+        return out
+
     def _check_tokens(
         self,
         draft_output_ids: t.Tensor,
         draft_model_probs: t.Tensor,
         large_model_probs: t.Tensor,
         pre_draft_length: int,
+        K: int = 4,
     ) -> Tuple[t.Tensor, int]:
         """Use large model to check if tokens are accepted by the rejection criteria.
         It will then keep up to before the first invalid token plus the new token from the main model.
@@ -160,53 +189,62 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         chosen_token_draft_probs = draft_probs_rearranged.gather(
             -1, draft_output_ids_rearranged
         )  # [batch_size, seq_len + K, 1]
-        p = chosen_token_draft_probs.squeeze(-1)  # [batch_size, seq_len + K]
+        chosen_token_draft_probs = chosen_token_draft_probs.squeeze(
+            -1
+        )  # [batch_size, seq_len + K]
+        p = chosen_token_draft_probs[:, pre_draft_length:]  # [batch_size,  K]
 
         chosen_token_large_probs = large_probs_rearranged.gather(
             -1, draft_output_ids_rearranged
         )  # [batch_size, seq_len + K, 1]
-        q = chosen_token_large_probs.squeeze(-1)  # [batch_size, seq_len + K]
+        chosen_token_large_probs = chosen_token_large_probs.squeeze(
+            -1
+        )  # [batch_size, seq_len + K]
+        q = chosen_token_large_probs[:, pre_draft_length:]  # [batch_size,  K]
 
         # p is the probability of the token from the draft model, q is the probability of the token from the large model
+        # r is the uniform random variable which we use to decide whether to accept or reject the token
+        r = t.rand(batch_size, K)
 
-        for i in range(pre_draft_length, seq_len_plus_k):
-            # Check if tokens are accepted
-            # Get the probability of the token from both models
-            p = chosen_token_draft_probs[:, i]  # [batch_size]
-            q = chosen_token_large_probs[:, i]  # [batch_size]
+        # Accept token if r < p / q for all tokens before current token
+        acceptances = r < t.min(t.tensor(1), (p / q))  # [batch_size, K]
+        num_accepted_tokens = self.get_num_accepted_tokens(acceptances)
 
-            r = t.rand(1)
+        contrasting_model_probs = F.relu(q - p)  # [batch_size, K]
+        contrast_sampled_tokens = t.multinomial(
+            contrasting_model_probs, num_samples=1
+        )  # [batch_size, K, 1]
+        contrast_sampled_tokens = contrast_sampled_tokens.squeeze(-1)  # [batch_size, K]
 
-            if r < p / q:
-                # Accept token
-                continue
-            else:
-                # Reject token
-                contrasting_model_probs = (
-                    large_model_probs[:, i, :] - draft_model_probs[:, i, :]
-                )
-                contrasting_model_probs = t.max(t.tensor(0), contrasting_model_probs)
-
-                # Sample from the contrasting model distribution
-                sampled_tokens = t.multinomial(
-                    contrasting_model_probs, num_samples=1
-                )  # [batch_size, 1]
-
-                out = t.cat(
-                    [draft_output_ids[:, :i], sampled_tokens], dim=-1
-                )  # [batch_size, seq_len + i + 1]
-                num_new_tokens_added = i - pre_draft_length + 1
-                return out, num_new_tokens_added
+        # Combine the accepted tokens if we accept with contrast_sampled_tokens if we reject
 
         # If all tokens are accepted, sample from the large model distribution for the final token
-        sampled_tokens = t.multinomial(large_model_probs[:, -1, :], num_samples=1)
 
-        out = t.cat(
-            [draft_output_ids, sampled_tokens], dim=-1
-        )  # [batch_size, seq_len + K + 1]
-        num_new_tokens_added = seq_len_plus_k - pre_draft_length + 1
+        # Accept token
+        #     continue
+        # else:
+        #     # Reject token
 
-        return out, num_new_tokens_added
+        #     # Sample from the contrasting model distribution
+        #     sampled_tokens = t.multinomial(
+        #         contrasting_model_probs, num_samples=1
+        #     )  # [batch_size, 1]
+
+        #     out = t.cat(
+        #         [draft_output_ids[:, :i], sampled_tokens], dim=-1
+        #     )  # [batch_size, seq_len + i + 1]
+        #     num_new_tokens_added = i - pre_draft_length + 1
+        #     return out, num_new_tokens_added
+
+        # # If all tokens are accepted, sample from the large model distribution for the final token
+        # sampled_tokens = t.multinomial(large_model_probs[:, -1, :], num_samples=1)
+
+        # out = t.cat(
+        #     [draft_output_ids, sampled_tokens], dim=-1
+        # )  # [batch_size, seq_len + K + 1]
+        # num_new_tokens_added = seq_len_plus_k - pre_draft_length + 1
+
+        # return out, num_new_tokens_added
 
     def generate(
         self,
