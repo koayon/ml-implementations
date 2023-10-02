@@ -66,6 +66,8 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         self.large_model_temperature = large_model_temperature
         self.draft_model_temperature = draft_model_temperature
 
+        self.pad_token_id = tokenizer.pad_token_id
+
     def forward(self, input_ids: t.Tensor) -> t.Tensor:
         """Forward with the main model
 
@@ -115,7 +117,9 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         return draft_output_ids, y  # [batch_size, seq_len + K]
 
     @staticmethod
-    def get_num_accepted_tokens(acceptances_bool_tensor: t.Tensor):
+    def get_acceptance_mask(
+        acceptances_bool_tensor: t.Tensor,
+    ) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """If rejections is True then acceptance is False, hence this gives the first time where acceptance is False.
 
         Parameters
@@ -127,19 +131,26 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         Returns
         -------
-        first_rejection : t.Tensor
-            batch_size
+        acceptance_mask : t.Tensor
+            batch_size, K
         """
         rejections_bool_tensor = ~acceptances_bool_tensor
 
         # This value is positive whenever there has been a rejection on the current token or before
         cumulative_rejections_tensor = t.cumsum(rejections_bool_tensor, dim=-1)
         # This value is true if there has been no rejections yet
-        no_rejections_yet = cumulative_rejections_tensor == 0
+        # In other words, we should accept every token for which this is true.
+        acceptance_mask = cumulative_rejections_tensor == 0  # [batch_size, K]
 
-        # This is the count of accepted tokens before the first rejection
-        out = t.sum(no_rejections_yet, dim=-1)  # [batch_size]
-        return out
+        # This value is true if there has been a rejection on the current token and its the first time for this.
+        first_rejection_mask = (
+            cumulative_rejections_tensor == 1
+        ) and rejections_bool_tensor  # [batch_size, K]
+
+        # Everything that is not accepted or first rejected is padded
+        pad_mask = t.ones_like(acceptance_mask) - acceptance_mask - first_rejection_mask
+
+        return acceptance_mask, first_rejection_mask, pad_mask
 
     def _check_tokens(
         self,
@@ -148,7 +159,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         large_model_probs: t.Tensor,
         pre_draft_length: int,
         K: int = 4,
-    ) -> Tuple[t.Tensor, int]:
+    ) -> Tuple[t.Tensor, float]:
         """Use large model to check if tokens are accepted by the rejection criteria.
         It will then keep up to before the first invalid token plus the new token from the main model.
 
@@ -166,13 +177,11 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         Returns
         -------
         accepted_output_ids: t.Tensor
-            [batch size, seq len + M + 1]
-        num_new_tokens_added: int
-            Number of new tokens is M, where 0 <= M <= K
+            [batch size, seq len + K + 1]
+        proportion_accepted: float
+            Proportion of draft_tokens accepted.
         """
         batch_size, seq_len_plus_k = draft_output_ids.shape
-
-        # For now assume batch_size = 1. TODO: Generalize to batch_size > 1
 
         # Rearrange to make it easier to gather the probabilities of the chosen tokens
         draft_probs_rearranged = rearrange(
@@ -200,7 +209,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         chosen_token_large_probs = chosen_token_large_probs.squeeze(
             -1
         )  # [batch_size, seq_len + K]
-        q = chosen_token_large_probs[:, pre_draft_length:]  # [batch_size,  K]
+        q = chosen_token_large_probs[:, pre_draft_length:-1]  # [batch_size,  K]
 
         # p is the probability of the token from the draft model, q is the probability of the token from the large model
         # r is the uniform random variable which we use to decide whether to accept or reject the token
@@ -208,7 +217,9 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         # Accept token if r < p / q for all tokens before current token
         acceptances = r < t.min(t.tensor(1), (p / q))  # [batch_size, K]
-        num_accepted_tokens = self.get_num_accepted_tokens(acceptances)
+        acceptance_mask, first_rejection_mask, pad_mask = self.get_acceptance_mask(
+            acceptances
+        )
 
         contrasting_model_probs = F.relu(q - p)  # [batch_size, K]
         contrast_sampled_tokens = t.multinomial(
@@ -217,34 +228,30 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         contrast_sampled_tokens = contrast_sampled_tokens.squeeze(-1)  # [batch_size, K]
 
         # Combine the accepted tokens if we accept with contrast_sampled_tokens if we reject
+        out = (
+            draft_output_ids[pre_draft_length:] * acceptance_mask
+            + contrast_sampled_tokens * first_rejection_mask
+            + pad_mask * self.pad_token_id
+        )  # [batch_size, K]
 
-        # If all tokens are accepted, sample from the large model distribution for the final token
+        # If the final token for any batch isn't padded this means all of the tokens were accepted
+        # So we sample from the large model distribution for the final token
+        final_token_accepted = out[:, -1] != self.pad_token_id  # [batch_size]
 
-        # Accept token
-        #     continue
-        # else:
-        #     # Reject token
+        sampled_tokens = t.multinomial(
+            large_model_probs[:, -1, :], num_samples=1
+        )  # [batch_size, 1]
+        # If the final token was accepted then we use the sampled token, otherwise we use the pad token for the k+1th token
+        final_tokens = (
+            sampled_tokens.squeeze(-1) * final_token_accepted
+            + self.pad_token_id * ~final_token_accepted
+        )  # [batch_size]
 
-        #     # Sample from the contrasting model distribution
-        #     sampled_tokens = t.multinomial(
-        #         contrasting_model_probs, num_samples=1
-        #     )  # [batch_size, 1]
+        out = t.cat([out, final_tokens.unsqueeze(-1)], dim=-1)  # [batch_size, K + 1]
 
-        #     out = t.cat(
-        #         [draft_output_ids[:, :i], sampled_tokens], dim=-1
-        #     )  # [batch_size, seq_len + i + 1]
-        #     num_new_tokens_added = i - pre_draft_length + 1
-        #     return out, num_new_tokens_added
+        proportion_accepted = t.sum(acceptances) / (K * batch_size)
 
-        # # If all tokens are accepted, sample from the large model distribution for the final token
-        # sampled_tokens = t.multinomial(large_model_probs[:, -1, :], num_samples=1)
-
-        # out = t.cat(
-        #     [draft_output_ids, sampled_tokens], dim=-1
-        # )  # [batch_size, seq_len + K + 1]
-        # num_new_tokens_added = seq_len_plus_k - pre_draft_length + 1
-
-        # return out, num_new_tokens_added
+        return out, proportion_accepted.item()
 
     def generate(
         self,
