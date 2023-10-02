@@ -24,6 +24,31 @@ large_model = load_pretrained_gpt_large()
 helper_model = load_pretrained_gpt()
 
 
+def sample(
+    sampling_weights: t.Tensor, num_samples: int = 1
+) -> Int[t.Tensor, "batch_size seq_len num_samples"]:
+    if sampling_weights.ndim == 2:
+        sampling_weights = sampling_weights.unsqueeze(1)
+
+    batch_size, seq_len, vocab_size = sampling_weights.shape
+
+    flat_sampling_weights = rearrange(
+        sampling_weights, "batch seq_len vocab -> (batch seq_len) vocab"
+    )
+    sample_ids = t.multinomial(
+        flat_sampling_weights, num_samples=num_samples
+    )  # [batch_size * seq_len, num_samples]
+
+    sample_ids = rearrange(
+        sample_ids,
+        "(batch seq_len) num_samples -> batch seq_len num_samples",
+        batch=batch_size,
+        seq_len=seq_len,
+    )
+
+    return sample_ids
+
+
 class SpeculativeDecodingWrapper(PreTrainedModel):
     """Contrastive Decoding approach to sampling using multiple helper models.
 
