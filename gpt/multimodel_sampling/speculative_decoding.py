@@ -152,37 +152,32 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         return acceptance_mask, first_rejection_mask, pad_mask
 
-    def _check_tokens(
-        self,
-        draft_output_ids: t.Tensor,
+    @staticmethod
+    def _get_p_q_probabilities(
         draft_model_probs: t.Tensor,
         large_model_probs: t.Tensor,
-        pre_draft_length: int,
-        K: int = 4,
-    ) -> Tuple[t.Tensor, float]:
-        """Use large model to check if tokens are accepted by the rejection criteria.
-        It will then keep up to before the first invalid token plus the new token from the main model.
+        draft_output_ids: t.Tensor,
+    ) -> Tuple[t.Tensor, t.Tensor]:
+        """Get the probabilities of the chosen tokens from the draft and large models.
 
         Parameters
         ----------
-        draft_output_ids : t.Tensor
-            [batch size, seq len + K]
         draft_model_probs : t.Tensor
-            [batch size, seq len + K, vocab_size]
-            Also called p in the paper
+            [batch k vocab_size]
         large_model_probs : t.Tensor
-            [batch size, seq len + K + 1, vocab_size]
-            Also called q in the paper
+            [batch k + 1 vocab_size]
+        draft_output_ids : t.Tensor
+            [batch k]
 
         Returns
         -------
-        accepted_output_ids: t.Tensor
-            [batch size, seq len + K + 1]
-        proportion_accepted: float
-            Proportion of draft_tokens accepted.
+        p : t.Tensor
+            [batch k]
+            The probability of the drafted token from the draft model
+        q: t.Tensor
+            [batch k]
+            The probability of the drafted token from the large model
         """
-        batch_size, seq_len_plus_k = draft_output_ids.shape
-
         # Rearrange to make it easier to gather the probabilities of the chosen tokens
         draft_probs_rearranged = rearrange(
             draft_model_probs, "batch seq vocab -> batch seq 1 vocab"
@@ -197,29 +192,62 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         # Gather the probabilities of the chosen tokens
         chosen_token_draft_probs = draft_probs_rearranged.gather(
             -1, draft_output_ids_rearranged
-        )  # [batch_size, seq_len + K, 1]
-        chosen_token_draft_probs = chosen_token_draft_probs.squeeze(
-            -1
-        )  # [batch_size, seq_len + K]
-        p = chosen_token_draft_probs[:, pre_draft_length:]  # [batch_size,  K]
+        )  # [batch_size, K, 1]
+        p = chosen_token_draft_probs.squeeze(-1)  # [batch_size, K]
 
         chosen_token_large_probs = large_probs_rearranged.gather(
             -1, draft_output_ids_rearranged
-        )  # [batch_size, seq_len + K, 1]
-        chosen_token_large_probs = chosen_token_large_probs.squeeze(
-            -1
-        )  # [batch_size, seq_len + K]
-        q = chosen_token_large_probs[:, pre_draft_length:-1]  # [batch_size,  K]
+        )  # [batch_size, K + 1, 1]
+        q = chosen_token_large_probs.squeeze(-1)[:, :-1]  # [batch_size,K]
+
+        return p, q
+
+    def _check_tokens(
+        self,
+        draft_output_ids: t.Tensor,
+        draft_model_probs: t.Tensor,
+        large_model_probs: t.Tensor,
+    ) -> Tuple[t.Tensor, float]:
+        """Use large model to check if tokens are accepted by the rejection criteria.
+        It will then keep up to before the first invalid token plus the new token from the main model.
+
+        Parameters
+        ----------
+        draft_output_ids : t.Tensor
+            [batch size, K]
+        draft_model_probs : t.Tensor
+            [batch size, K, vocab_size]
+            Also called p in the paper
+        large_model_probs : t.Tensor
+            [batch size, K + 1, vocab_size]
+            Also called q in the paper
+
+        Returns
+        -------
+        accepted_output_ids: t.Tensor
+            [batch size, seq len + K + 1]
+        proportion_accepted: float
+            Proportion of draft_tokens accepted.
+        """
+        batch_size, k = draft_output_ids.shape
+        # k is the number of tokens we have drafted
+
+        p, q = self._get_p_q_probabilities(
+            draft_model_probs=draft_model_probs,
+            large_model_probs=large_model_probs,
+            draft_output_ids=draft_output_ids,
+        )
 
         # p is the probability of the token from the draft model, q is the probability of the token from the large model
         # r is the uniform random variable which we use to decide whether to accept or reject the token
-        r = t.rand(batch_size, K)
+        r = t.rand_like(p)
 
         # Accept token if r < p / q for all tokens before current token
         acceptances = r < t.min(t.tensor(1), (p / q))  # [batch_size, K]
         acceptance_mask, first_rejection_mask, pad_mask = self.get_acceptance_mask(
             acceptances
         )
+        proportion_accepted = t.sum(acceptances) / (k * batch_size)
 
         contrasting_model_probs = F.relu(q - p)  # [batch_size, K]
         contrast_sampled_tokens = t.multinomial(
@@ -229,7 +257,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         # Combine the accepted tokens if we accept with contrast_sampled_tokens if we reject
         out = (
-            draft_output_ids[pre_draft_length:] * acceptance_mask
+            draft_output_ids * acceptance_mask
             + contrast_sampled_tokens * first_rejection_mask
             + pad_mask * self.pad_token_id
         )  # [batch_size, K]
@@ -248,8 +276,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         )  # [batch_size]
 
         out = t.cat([out, final_tokens.unsqueeze(-1)], dim=-1)  # [batch_size, K + 1]
-
-        proportion_accepted = t.sum(acceptances) / (K * batch_size)
 
         return out, proportion_accepted.item()
 
@@ -279,16 +305,18 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             [batch size, new_seq_len]
 
         """
-        i = 0
-        while i < max_new_tokens:
+        current_max_seq_len = input_ids.shape[1]
+        while current_max_seq_len < max_new_tokens:
             pre_draft_length = len(input_ids)
             # Generate K tokens
             draft_output_ids, draft_logits = self._draft_k_tokens(input_ids, K)
 
+            # Forward pass through large model
             large_model_logits = self.large_model(
                 draft_output_ids
             )  # [batch_size, seq_len + K + 1, vocab_size]
 
+            # Softmax to get probabilities
             draft_model_probs = t.softmax(
                 draft_logits / self.draft_model_temperature, dim=-1
             )  # [batch_size, seq_len + K, vocab_size]
@@ -298,13 +326,17 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
             # Check if tokens are valid and keep up to before the first invalid token plus the new token from the main model
             # TODO: Design greedy decoding version as well.
-            input_ids, num_new_tokens_added = self._check_tokens(
-                draft_output_ids, draft_model_probs, large_model_probs, pre_draft_length
+            input_ids, proportion_tokens_accepted = self._check_tokens(
+                draft_output_ids[:, pre_draft_length:],
+                draft_model_probs[:, :pre_draft_length],
+                large_model_probs[:, :pre_draft_length],
             )
-            i += num_new_tokens_added
+
+            _batch, current_max_seq_len = input_ids.shape
 
             if verbose:
-                print(i, input_ids)
+                print(current_max_seq_len, input_ids)
+                print(f"Proportion of tokens accepted: {proportion_tokens_accepted}")
 
             if (input_ids[:, -1] == tokenizer.eos_token_id).all():
                 # Early stopping if all sequences have ended
