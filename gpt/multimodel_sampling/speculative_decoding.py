@@ -4,7 +4,7 @@ from typing import Tuple
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import einsum, rearrange
+from einops import einsum, rearrange, repeat
 from jaxtyping import Int
 from transformers import (
     AutoModelForCausalLM,
@@ -440,6 +440,22 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         ), f"final_tokens should have shape (batch_size, 1), but got {final_tokens.shape}"
 
         return final_tokens  # [batch_size, 1]
+
+    def get_k_last_tokens(
+        self, input_tensor: t.Tensor, last_non_pad_token_per_batch: t.Tensor, K: int
+    ) -> t.Tensor:
+        assert input_tensor.ndim == 2
+        assert last_non_pad_token_per_batch.ndim == 1
+        assert K > 0
+
+        filtering_tensor = repeat(
+            last_non_pad_token_per_batch, "batch -> batch k", k=K
+        )  # [batch_size, K]
+        filtering_tensor = filtering_tensor - K + t.arange(K) + 1  # [batch_size, K]
+
+        out = input_tensor.gather(1, filtering_tensor)  # [batch_size, K]
+
+        return out
 
     def generate(
         self,
