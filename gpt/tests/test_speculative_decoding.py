@@ -174,3 +174,30 @@ class TestGetKLastTokens:
             output = sd_model.get_k_last_tokens(
                 input_tensor, last_non_pad_token_per_batch, K
             )
+
+    def test_3d_tensor(self):
+        input_tensor = t.tensor(
+            [
+                [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],
+                [[11, 12], [13, 14], [15, 16], [17, 18], [19, 20]],
+            ]
+        )
+        last_non_pad_token_per_batch = t.tensor([3, 4])
+        K = 2
+
+        print("input_tensor.shape", input_tensor.shape)
+
+        sd_model = SpeculativeDecodingWrapper()
+        output = sd_model.get_k_last_tokens(
+            input_tensor, last_non_pad_token_per_batch, K
+        )
+        assert output.shape == (2, 2, 2)
+
+        print(output)
+
+        assert t.all(
+            output
+            == t.tensor(
+                [[[5, 6], [7, 8]], [[17, 18], [19, 20]]],
+            )
+        )
