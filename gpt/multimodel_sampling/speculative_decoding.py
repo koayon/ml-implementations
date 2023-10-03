@@ -131,10 +131,17 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         batch_size = last_non_pad_token_per_batch.shape[0]
         seq_len = int(last_non_pad_token_per_batch.max().item()) + 1
 
-        attention_mask = t.arange(seq_len).expand(
-            batch_size, seq_len
-        ) <= last_non_pad_token_per_batch.unsqueeze(-1)
-        attention_mask = attention_mask
+        range = t.arange(seq_len)
+        expanded_range = repeat(
+            range, "seq_len -> batch seq_len", batch=batch_size
+        )  # [batch_size, seq_len]
+
+        expanded_last_tok = repeat(
+            last_non_pad_token_per_batch, "batch -> batch seq_len", seq_len=seq_len
+        )
+
+        attention_mask = expanded_range <= expanded_last_tok
+
         return attention_mask
 
     def _draft_k_tokens(
@@ -559,9 +566,21 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 num_tokens_accepted,
                 proportion_tokens_accepted,
             ) = self._check_tokens(
-                draft_output_ids[:, -K:],
-                draft_model_probs[:, -K:],
-                large_model_probs[:, -(K + 1) : -1],
+                self.get_k_last_tokens(
+                    draft_output_ids,
+                    last_non_pad_token_per_batch=last_non_pad_token_per_batch,
+                    K=K,
+                ),
+                self.get_k_last_tokens(
+                    draft_model_probs,
+                    last_non_pad_token_per_batch=last_non_pad_token_per_batch,
+                    K=K,
+                ),
+                self.get_k_last_tokens(
+                    large_model_probs[:, :-1],
+                    last_non_pad_token_per_batch=last_non_pad_token_per_batch,
+                    K=K,
+                ),
             )
 
             # TODO: ^^Need to pick out tokens using the last_non_pad_token_per_batch here.
