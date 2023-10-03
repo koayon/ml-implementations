@@ -20,8 +20,13 @@ LARGE_MODEL = "gpt2-large"
 HELPER_MODEL = "gpt2"
 
 tokenizer = AutoTokenizer.from_pretrained(LARGE_MODEL)
+tokenizer.pad_token = "<PAD>"
+tokenizer.pad_token_id = len(tokenizer) - 2
+
 large_model = load_pretrained_gpt_large()
 helper_model = load_pretrained_gpt()
+
+PAD_TOKEN_ID = tokenizer.pad_token_id
 
 
 def sample(
@@ -92,8 +97,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         self.large_model_temperature = large_model_temperature
         self.draft_model_temperature = draft_model_temperature
 
-        self.pad_token_id = tokenizer.eos_token_id
-
     def forward(self, input_ids: t.Tensor) -> t.Tensor:
         """Forward with the main model
 
@@ -105,7 +108,38 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         """
         return self.large_model(input_ids)
 
-    def _draft_k_tokens(self, input_ids: t.Tensor, K: int) -> Tuple[t.Tensor, t.Tensor]:
+    def get_attention_mask(self, last_non_pad_token_per_batch: t.Tensor) -> t.Tensor:
+        """Get the attention mask for the current tokens.
+
+        Parameters
+        ----------
+        last_non_pad_token_per_batch : t.Tensor
+            [batch_size]
+
+        Returns
+        -------
+        attention_mask : t.Tensor
+            [batch_size, seq_len]
+        """
+        assert last_non_pad_token_per_batch.ndim == 1
+
+        if t.min(last_non_pad_token_per_batch) < 0:
+            raise ValueError(
+                "last_non_pad_token_per_batch should be a tensor of non-negative integers"
+            )
+
+        batch_size = last_non_pad_token_per_batch.shape[0]
+        seq_len = int(last_non_pad_token_per_batch.max().item()) + 1
+
+        attention_mask = t.arange(seq_len).expand(
+            batch_size, seq_len
+        ) <= last_non_pad_token_per_batch.unsqueeze(-1)
+        attention_mask = attention_mask
+        return attention_mask
+
+    def _draft_k_tokens(
+        self, input_ids: t.Tensor, last_non_pad_token_per_batch: t.Tensor, K: int
+    ) -> Tuple[t.Tensor, t.Tensor, t.Tensor]:
         """Small model autoregressively generates K next tokens.
 
         Parameters
@@ -121,15 +155,22 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             batch_size, seq_len + K
         logits:
             batch_size, seq_len + K, vocab_size
+        last_non_pad_token_per_batch:
+            batch_size
         """
 
         batch_size, seq_len = input_ids.shape
         helper_logits = t.empty((1))
 
         for i in range(K):
+            attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+
             # Forward pass through helper model
-            helper_out = self.helper_model(input_ids)
+            helper_out = self.helper_model(
+                input_ids=input_ids, attention_mask=attention_mask
+            )
             helper_logits = helper_out.logits  # [batch_size, seq_len + i, vocab_size]
+            last_non_pad_token_per_batch += 1
 
             # Greedy sample
             # TODO: Switch to multinomial sampling
@@ -143,6 +184,8 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             input_ids = t.cat(
                 [input_ids, sampled_new_token], dim=-1
             )  # [batch_size, seq_len + 1]
+
+            # Add to the attention_mask to account for the new token
 
             if (input_ids[:, -1] == tokenizer.eos_token_id).all():
                 # Early stopping if all sequences have ended
@@ -158,7 +201,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         assert seq_len < draft_output_ids.shape[1] <= seq_len + K
 
-        return draft_output_ids, helper_logits
+        return draft_output_ids, helper_logits, last_non_pad_token_per_batch
 
     @staticmethod
     def get_acceptance_mask(
@@ -259,7 +302,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         draft_output_ids: t.Tensor,
         draft_model_probs: t.Tensor,
         large_model_probs: t.Tensor,
-    ) -> Tuple[t.Tensor, t.Tensor, float]:
+    ) -> Tuple[t.Tensor, t.Tensor, t.Tensor, float]:
         """Use large model to check if tokens are accepted by the rejection criteria.
         It will then keep up to before the first invalid token.
         For the first invalid token if one exists, we use the contrastive/rejection sampling approach.
@@ -272,7 +315,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             [batch size, K, vocab_size]
             Also called p in the paper
         large_model_probs : t.Tensor
-            [batch size, K + 1, vocab_size]
+            [batch size, K, vocab_size]
             Also called q in the paper
 
         Returns
@@ -283,6 +326,9 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             bool [batch size]
             Whether or not the final token was accepted for each batch.
             If yes we need to sample from the large model distribution for the final token.
+        num_tokens_accepted: t.Tensor
+            [batch size]
+            The number of tokens accepted for each batch.
         proportion_accepted: float
             Proportion of draft_tokens accepted.
         """
@@ -310,6 +356,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         acceptance_mask, first_rejection_mask, pad_mask = self.get_acceptance_mask(
             acceptances
         )
+        num_tokens_accepted = t.sum(acceptance_mask, dim=-1)  # [batch_size]
         proportion_accepted = t.sum(acceptances) / (k * batch_size)
 
         contrasting_model_probs = F.relu(
@@ -327,24 +374,28 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             "contrast_sampled_tokens",
             contrast_sampled_tokens * first_rejection_mask.squeeze(-1),
         )
-        print("pad_token_ids", self.pad_token_id * pad_mask.squeeze(-1))
+        print("PAD_TOKEN_ID_ids", PAD_TOKEN_ID * pad_mask.squeeze(-1))
 
         out = (
             draft_output_ids * acceptance_mask.squeeze(-1)
             + contrast_sampled_tokens * first_rejection_mask.squeeze(-1)
-            + self.pad_token_id * pad_mask.squeeze(-1)
+            + PAD_TOKEN_ID * pad_mask.squeeze(-1)
         )  # [batch_size, K]
 
         print("out", out)
-        assert False
 
         assert out.shape == (batch_size, k)
 
         # If the final token for any batch isn't padded this means all of the tokens were accepted
         # So we sample from the large model distribution for the final token
-        final_token_accepted = ~pad_mask[:, -1].squeeze(0)  # bool [batch_size]
+        final_token_accepted = ~pad_mask[:, -1]  # bool [batch_size]
 
-        return out, final_token_accepted, proportion_accepted.item()
+        return (
+            out,
+            final_token_accepted,
+            num_tokens_accepted,
+            proportion_accepted.item(),
+        )
 
     def sample_final_token(
         self, large_model_probs: t.Tensor, final_token_accepted: t.Tensor
@@ -379,7 +430,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         # If the final token was accepted then we use the sampled token, otherwise we use the pad token for the k+1th token
         final_tokens = (
             final_sampled_tokens * final_token_accepted
-            + self.pad_token_id * ~final_token_accepted
+            + PAD_TOKEN_ID * ~final_token_accepted
         )  # [batch_size]
         final_tokens = final_tokens.unsqueeze(-1)  # [batch_size, 1]
 
@@ -420,14 +471,30 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         tokens_added = 0
         output_ids = t.empty((1))
 
+        last_non_pad_token_per_batch = t.argmax(
+            (input_ids == PAD_TOKEN_ID) * 1.0, dim=-1
+        )
+        # attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+
         while tokens_added < max_new_tokens:
-            print("Hit start of while loop!")
-            print("-------------------------")
-            print(f"Completion so far at {tokens_added} tokens added:")
-            print(tokenizer.batch_decode(input_ids.tolist(), skip_special_tokens=True))
+            if verbose:
+                print("Hit start of while loop!")
+                print("-------------------------")
+                print(f"Completion so far at {tokens_added} tokens added:")
+                print(
+                    tokenizer.batch_decode(input_ids.tolist(), skip_special_tokens=True)
+                )
 
             # Step 1: Draft Generate K tokens
-            draft_output_ids, draft_logits = self._draft_k_tokens(input_ids, K)
+            (
+                draft_output_ids,
+                draft_logits,
+                last_non_pad_token_per_batch,
+            ) = self._draft_k_tokens(
+                input_ids=input_ids,
+                last_non_pad_token_per_batch=last_non_pad_token_per_batch,
+                K=K,
+            )
 
             if verbose:
                 print("Drafted sentence: ")
@@ -438,10 +505,16 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 )
 
             # Step 2: Forward pass through large model
-            large_model_output = self.large_model(draft_output_ids)
+            attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+
+            large_model_output = self.large_model(
+                input_ids=draft_output_ids, attention_mask=attention_mask
+            )
             large_model_logits = (
                 large_model_output.logits
             )  # [batch_size, seq_len + K, vocab_size]
+
+            last_non_pad_token_per_batch += 1
 
             # Pad the logits with zeros to make the shape compatible with the ids
             zeros = t.zeros_like(
@@ -467,6 +540,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             (
                 output_ids,
                 final_token_accepted,
+                num_tokens_accepted,
                 proportion_tokens_accepted,
             ) = self._check_tokens(
                 draft_output_ids[:, -K:],
@@ -474,11 +548,16 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 large_model_probs[:, -(K + 1) : -1],
             )
 
+            # TODO: ^^Need to pick out tokens using the last_non_pad_token_per_batch here.
+            # ^We're not necessarily picking out the final K tokens here for each batch. It wants to be the final tokens that aren't pad tokens.
+
             # Step 4: Sample the final token from the large model distribution if it was accepted
             final_tokens = self.sample_final_token(
                 large_model_probs=large_model_probs,
                 final_token_accepted=final_token_accepted,
             )
+            last_non_pad_token_per_batch += final_token_accepted
+
             output_ids = t.cat(
                 [output_ids, final_tokens], dim=-1
             )  # [batch_size, seq_len + K + 1]
@@ -488,7 +567,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 print("Break!")
                 break
 
-            # TODO: There's an issue with the paddding making it want to start a new completion (I think?) It's not guessing. Or it's not ignoring tokens the way it should be.
+            # Step 5: Add the new tokens to the input_ids
 
             input_ids = t.cat(
                 [input_ids, output_ids], dim=-1
@@ -499,6 +578,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             if verbose:
                 print("seq_shape", input_ids.shape)
                 print(f"Proportion of tokens accepted: {proportion_tokens_accepted}")
+                print("last_non_pad_token_per_batch", last_non_pad_token_per_batch)
 
         output_ids = input_ids
         return input_ids
