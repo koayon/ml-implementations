@@ -4,8 +4,10 @@ from typing import Tuple
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
+from coverage import FileReporter
 from einops import einsum, rearrange, repeat
 from jaxtyping import Int
+from spacy import vocab
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -170,7 +172,11 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         helper_logits = t.empty((1))
 
         for i in range(K):
+            print(last_non_pad_token_per_batch)
             attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+
+            print(attention_mask.shape)
+            print("attention_mask", attention_mask)
 
             # Forward pass through helper model
             helper_out = self.helper_model(
@@ -448,19 +454,70 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
 
         return final_tokens  # [batch_size, 1]
 
+    @staticmethod
     def get_k_last_tokens(
-        self, input_tensor: t.Tensor, last_non_pad_token_per_batch: t.Tensor, K: int
+        input_tensor: t.Tensor, last_non_pad_token_per_batch: t.Tensor, K: int
     ) -> t.Tensor:
-        assert input_tensor.ndim == 2
+        """Get the last K tokens for each batch in the input tensor.
+
+        Parameters
+        ----------
+        input_tensor : t.Tensor
+            [batch_size, seq_len] or [batch_size, seq_len, vocab_size]
+        last_non_pad_token_per_batch : t.Tensor
+            [batch_size]
+        K : int
+            The number of tokens back to get.
+
+        Returns
+        -------
+        t.Tensor
+            [batch_size, K] or [batch_size, K, vocab_size
+
+        Raises
+        ------
+        ValueError
+            If the input_tensor has more than 3 dimensions.
+        """
         assert last_non_pad_token_per_batch.ndim == 1
         assert K > 0
 
-        filtering_tensor = repeat(
-            last_non_pad_token_per_batch, "batch -> batch k", k=K
-        )  # [batch_size, K]
-        filtering_tensor = filtering_tensor - K + t.arange(K) + 1  # [batch_size, K]
+        print("input_tensor", input_tensor)
+        print("last_non_pad_token_per_batch", last_non_pad_token_per_batch)
+        print("K", K)
 
-        out = input_tensor.gather(1, filtering_tensor)  # [batch_size, K]
+        if input_tensor.ndim == 2:
+            filtering_tensor = repeat(
+                last_non_pad_token_per_batch, "batch -> batch k", k=K
+            )  # [batch_size, K]
+            filtering_tensor = filtering_tensor - K + t.arange(K) + 1  # [batch_size, K]
+
+        elif input_tensor.ndim == 3:
+            vocab_size = input_tensor.shape[-1]
+
+            filtering_tensor = repeat(
+                last_non_pad_token_per_batch,
+                "batch -> batch k vocab",
+                k=K,
+                vocab=vocab_size,
+            )  # [batch_size, K]
+
+            filtering_tensor = (
+                filtering_tensor
+                - K
+                + repeat(t.arange(K), "k -> k vocab", vocab=vocab_size)
+                + 1
+            )  # [batch_size, K vocab_size]
+        else:
+            raise ValueError(
+                f"input_tensor should have 2 or 3 dimensions, but got {input_tensor.ndim} dims"
+            )
+
+        print("filtering_tensor", filtering_tensor)
+
+        out = input_tensor.gather(
+            1, filtering_tensor
+        )  # [batch_size, K] or [batch_size, K, vocab_size]
 
         return out
 
@@ -494,10 +551,12 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         tokens_added = 0
         output_ids = t.empty((1))
 
-        last_non_pad_token_per_batch = t.argmax(
-            (input_ids == PAD_TOKEN_ID) * 1.0, dim=-1
-        )
-        # attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+        # If a row doesn't contain the pad token then set the value to be len(input_ids) - 1
+        # If it does then set the value to be that token index
+        high_pad = (input_ids == PAD_TOKEN_ID).float() * 1e9 + (
+            input_ids != PAD_TOKEN_ID
+        ).float() * t.arange(input_ids.shape[1])
+        last_non_pad_token_per_batch = t.argmax(high_pad, dim=-1)  # [batch_size]
 
         while tokens_added < max_new_tokens:
             if verbose:
@@ -536,8 +595,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             large_model_logits = (
                 large_model_output.logits
             )  # [batch_size, seq_len + K, vocab_size]
-
-            last_non_pad_token_per_batch += 1
 
             # Pad the logits with zeros to make the shape compatible with the ids
             zeros = t.zeros_like(
