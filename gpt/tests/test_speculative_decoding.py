@@ -112,3 +112,65 @@ class TestGetAttentionMask:
 
         with pytest.raises(ValueError):
             attention_mask = model.get_attention_mask(last_non_pad_token_per_batch)
+
+
+class TestGetKLastTokens:
+    # Returns the last K tokens for each batch in the input tensor.
+    def test_returns_last_k_tokens(self):
+        input_tensor = t.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
+        last_non_pad_token_per_batch = t.tensor([3, 4])
+        K = 2
+
+        print(input_tensor)
+
+        sd_model = SpeculativeDecodingWrapper()
+        output = sd_model.get_k_last_tokens(
+            input_tensor, last_non_pad_token_per_batch, K
+        )
+
+        expected_output = t.tensor([[3, 4], [9, 10]])
+
+        assert output.shape == (2, 2)
+
+        print(output)
+        print(expected_output)
+
+        assert t.all(output == expected_output)
+
+    # Works with different K values.
+    def test_works_with_different_k_values(self):
+        input_tensor = t.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
+        last_non_pad_token_per_batch = t.tensor([3, 4])
+        K = 3
+
+        sd_model = SpeculativeDecodingWrapper()
+        output = sd_model.get_k_last_tokens(
+            input_tensor, last_non_pad_token_per_batch, K
+        )
+
+        expected_output = t.tensor([[2, 3, 4], [8, 9, 10]])
+        assert t.all(output == expected_output)
+
+    # Returns exception if K is 0.
+    def test_returns_empty_tensor_if_k_is_zero(self):
+        input_tensor = t.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
+        last_non_pad_token_per_batch = t.tensor([3, 4])
+        K = 0
+
+        sd_model = SpeculativeDecodingWrapper()
+        with pytest.raises(AssertionError):
+            output = sd_model.get_k_last_tokens(
+                input_tensor, last_non_pad_token_per_batch, K
+            )
+
+    # Raises error if K is greater than sequence length.
+    def test_returns_input_tensor_if_k_greater_than_or_equal_to_sequence_length(self):
+        input_tensor = t.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
+        last_non_pad_token_per_batch = t.tensor([3, 4])
+        K = 5
+
+        sd_model = SpeculativeDecodingWrapper()
+        with pytest.raises(RuntimeError):
+            output = sd_model.get_k_last_tokens(
+                input_tensor, last_non_pad_token_per_batch, K
+            )
