@@ -26,18 +26,20 @@ class CrossAttentionLayer(nn.Module):
         encoder_hidden_size: int,
         decoder_hidden_size: int,
         num_heads: int,
-        head_size: int,
+        head_size: Optional[int] = None,
         dropout: float = 0.1,
     ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_size = head_size
+        self.head_size = (
+            head_size if head_size is not None else decoder_hidden_size // num_heads
+        )
 
-        self.q_proj = nn.Linear(decoder_hidden_size, head_size * num_heads)
-        self.kv_proj = nn.Linear(encoder_hidden_size, head_size * num_heads * 2)
+        self.q_proj = nn.Linear(decoder_hidden_size, self.head_size * num_heads)
+        self.kv_proj = nn.Linear(encoder_hidden_size, self.head_size * num_heads * 2)
 
         self.attention = AttentionMechanism(
-            head_size, num_heads, dropout=dropout, autoregressive=False
+            self.head_size, num_heads, dropout=dropout, masked=False
         )
 
     def forward(
@@ -64,7 +66,7 @@ class AttentionMechanism(nn.Module):
         num_heads: int,
         head_size: Optional[int] = None,
         dropout=0.1,
-        autoregressive: bool = True,
+        masked: bool = True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -82,7 +84,7 @@ class AttentionMechanism(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
-        self.autoregressive = autoregressive
+        self.masked = masked
 
     def forward(
         self,
@@ -134,7 +136,7 @@ class AttentionMechanism(nn.Module):
         mask = t.tril(t.ones_like(q_k)).to(x.device)  # seq, seq
 
         # Use lower triangular mask for q_k matrix. Where mask is 0 (i.e. upper triangle), we set the attention score to -inf (which will be 0 post softmax)
-        if self.autoregressive:
+        if self.masked:
             masked_attention_scores = q_k.masked_fill(
                 mask == 0, float("-inf")
             )  # batch, num_heads, seq, seq
