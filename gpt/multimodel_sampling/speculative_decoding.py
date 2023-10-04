@@ -96,8 +96,16 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         self.helper_model = helper_model
         self.config = config
 
-        self.large_model_temperature = large_model_temperature
-        self.draft_model_temperature = draft_model_temperature
+        eps = 1e-6
+
+        # Add epsilon to avoid dividing by zero
+        self.large_model_temperature = large_model_temperature + eps
+        self.draft_model_temperature = draft_model_temperature + eps
+        self.K = K
+
+        assert K > 0
+        assert 0 <= large_model_temperature <= 2
+        assert 0 <= draft_model_temperature <= 2
 
     def forward(self, input_ids: t.Tensor) -> t.Tensor:
         """Forward with the main model
@@ -110,7 +118,9 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         """
         return self.large_model(input_ids)
 
-    def get_attention_mask(self, last_non_pad_token_per_batch: t.Tensor) -> t.Tensor:
+    def get_attention_mask(
+        self, last_non_pad_token_per_batch: t.Tensor, seq_len: int
+    ) -> t.Tensor:
         """Get the attention mask for the current tokens.
 
         Parameters
@@ -131,7 +141,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             )
 
         batch_size = last_non_pad_token_per_batch.shape[0]
-        seq_len = int(last_non_pad_token_per_batch.max().item()) + 1
 
         range = t.arange(seq_len)
         expanded_range = repeat(
@@ -168,22 +177,25 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             batch_size
         """
 
-        batch_size, seq_len = input_ids.shape
         helper_logits = t.empty((1))
+        batch_size, seq_len = input_ids.shape
 
         for i in range(K):
-            print(last_non_pad_token_per_batch)
-            attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+            batch_size, seq_len = input_ids.shape
 
-            print(attention_mask.shape)
-            print("attention_mask", attention_mask)
+            # print(last_non_pad_token_per_batch)
+            attention_mask = self.get_attention_mask(
+                last_non_pad_token_per_batch, seq_len
+            )
+
+            # print(attention_mask.shape)
+            # print("attention_mask", attention_mask)
 
             # Forward pass through helper model
             helper_out = self.helper_model(
                 input_ids=input_ids, attention_mask=attention_mask
             )
             helper_logits = helper_out.logits  # [batch_size, seq_len + i, vocab_size]
-            last_non_pad_token_per_batch += 1
 
             # Greedy sample
             # TODO: Switch to multinomial sampling
@@ -193,6 +205,11 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             ).unsqueeze(
                 0
             )  # [batch_size, 1]
+
+            # If the new token is a pad token then we don't want to increment the last_non_pad_token_per_batch
+            last_non_pad_token_per_batch += (
+                sampled_new_token.squeeze() != PAD_TOKEN_ID
+            )  # [batch_size]
 
             input_ids = t.cat(
                 [input_ids, sampled_new_token], dim=-1
@@ -354,9 +371,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             draft_output_ids=draft_output_ids,
         )
 
-        print("p.shape", p.shape)
-        print("q.shape", q.shape)
-
         # p is the probability of the token from the draft model, q is the probability of the token from the large model
         # r is the uniform random variable which we use to decide whether to accept or reject the token
         r = t.rand_like(p)
@@ -365,7 +379,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         p_q_ratio = t.min(t.tensor(1), (p / q))  # [batch_size, K]
 
         acceptances = r < p_q_ratio  # [batch_size, K]
-        print("acceptances.shape", acceptances.shape)
+
         acceptance_mask, first_rejection_mask, pad_mask = self.get_acceptance_mask(
             acceptances
         )
@@ -482,10 +496,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
         assert last_non_pad_token_per_batch.ndim == 1
         assert K > 0
 
-        print("input_tensor", input_tensor)
-        print("last_non_pad_token_per_batch", last_non_pad_token_per_batch)
-        print("K", K)
-
         if input_tensor.ndim == 2:
             filtering_tensor = repeat(
                 last_non_pad_token_per_batch, "batch -> batch k", k=K
@@ -512,8 +522,6 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
             raise ValueError(
                 f"input_tensor should have 2 or 3 dimensions, but got {input_tensor.ndim} dims"
             )
-
-        print("filtering_tensor", filtering_tensor)
 
         out = input_tensor.gather(
             1, filtering_tensor
@@ -587,7 +595,9 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 )
 
             # Step 2: Forward pass through large model
-            attention_mask = self.get_attention_mask(last_non_pad_token_per_batch)
+            attention_mask = self.get_attention_mask(
+                last_non_pad_token_per_batch, seq_len=draft_output_ids.shape[1]
+            )
 
             large_model_output = self.large_model(
                 input_ids=draft_output_ids, attention_mask=attention_mask
@@ -640,8 +650,7 @@ class SpeculativeDecodingWrapper(PreTrainedModel):
                 ),
             )
 
-            # TODO: ^^Need to pick out tokens using the last_non_pad_token_per_batch here.
-            # ^We're not necessarily picking out the final K tokens here for each batch. It wants to be the final tokens that aren't pad tokens.
+            # TODO: We might need to make all the batches the same size here so we're looking at, the min number of tokens accepted (perhaps with some lenience)
 
             # Step 4: Sample the final token from the large model distribution if it was accepted
             final_tokens = self.sample_final_token(

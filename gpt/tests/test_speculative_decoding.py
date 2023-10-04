@@ -65,10 +65,14 @@ def test_forward():
 
 class TestGetAttentionMask:
     # Returns a tensor of shape [batch_size, seq_len] when given a tensor of shape [batch_size].
+    def __init__(self):
+        self.model = SpeculativeDecodingWrapper()
+
     def test_returns_attention_mask_with_correct_shape(self):
         last_non_pad_token_per_batch = t.tensor([3, 5, 2])
-        model = SpeculativeDecodingWrapper()
-        attention_mask = model.get_attention_mask(last_non_pad_token_per_batch)
+        attention_mask = self.model.get_attention_mask(
+            last_non_pad_token_per_batch, seq_len=6
+        )
         assert attention_mask.shape == (3, 6)
 
         assert (
@@ -85,15 +89,17 @@ class TestGetAttentionMask:
     # Returns a tensor of all True values when given a tensor of shape [batch_size] with all values equal to seq_len - 1.
     def test_returns_attention_mask_with_all_true_values(self):
         last_non_pad_token_per_batch = t.tensor([5, 5, 5])
-        model = SpeculativeDecodingWrapper()
-        attention_mask = model.get_attention_mask(last_non_pad_token_per_batch)
+        attention_mask = self.model.get_attention_mask(
+            last_non_pad_token_per_batch, seq_len=6
+        )
         assert attention_mask.all()
 
     # Returns a tensor of one True and the rest False when given a tensor of shape [batch_size] with all values equal to 0.
     def test_returns_attention_mask_with_all_false_values(self):
         last_non_pad_token_per_batch = t.tensor([0, 2, 0])
-        model = SpeculativeDecodingWrapper()
-        attention_mask = model.get_attention_mask(last_non_pad_token_per_batch)
+        attention_mask = self.model.get_attention_mask(
+            last_non_pad_token_per_batch, seq_len=3
+        )
         assert (
             attention_mask
             == t.tensor(
@@ -108,10 +114,11 @@ class TestGetAttentionMask:
     # Returns a tensor of all False values when given a tensor of shape [batch_size] with all values equal to -1.
     def test_returns_attention_mask_with_all_false_values_negative_input(self):
         last_non_pad_token_per_batch = t.tensor([-1, -1, -1])
-        model = SpeculativeDecodingWrapper()
 
         with pytest.raises(ValueError):
-            attention_mask = model.get_attention_mask(last_non_pad_token_per_batch)
+            attention_mask = self.model.get_attention_mask(
+                last_non_pad_token_per_batch, seq_len=3
+            )
 
 
 class TestGetKLastTokens:
