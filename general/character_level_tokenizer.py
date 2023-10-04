@@ -17,9 +17,22 @@ class CharTokenizer:
             self.char_to_index[token] = i
             self.index_to_char[i] = token
 
+        self.pad_token = "<PAD>"
+        self.sos_token = "<SOS>"
+        self.eos_token = "<EOS>"
+        self.idk_token = "<IDK>"
+
+        self.pad_token_id = self.char_to_index[self.pad_token]
+        self.sos_token_id = self.char_to_index[self.sos_token]
+        self.eos_token_id = self.char_to_index[self.eos_token]
+        self.idk_token_id = self.char_to_index[self.idk_token]
+
         for i, char in enumerate(character_tokens):
             self.char_to_index[char] = i + len(special_tokens)
             self.index_to_char[i + len(special_tokens)] = char
+
+    def __len__(self):
+        return len(self.char_to_index)
 
     def encode(self, text: str) -> List[int]:
         return [self.char_to_index[char] for char in text]
