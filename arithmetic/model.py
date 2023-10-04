@@ -1,8 +1,11 @@
-from typing import Any, List, Optional, Tuple
+from json import encoder
+from typing import Any, List, Optional, Tuple, Union
 
 import torch as t
 import torch.nn.functional as F
 from einops import rearrange, repeat
+from regex import W
+from spacy.tests.parser.test_nn_beam import batch_size
 from torch import nn
 from torch.distributions.categorical import Categorical
 from transformers import PretrainedConfig, PreTrainedModel
@@ -10,6 +13,7 @@ from transformers import PretrainedConfig, PreTrainedModel
 from arithmetic.config import ArithmeticConfig
 from general.character_level_tokenizer import CharTokenizer
 from gpt.cached_attention import AttentionCache
+from gpt.enc_dec_transformer_block import EncDecTransformerBlock
 from gpt.model import FullKeyValueCache
 from gpt.transformer_block import GPT2Block
 from helpers import einsum
@@ -75,14 +79,13 @@ class ArithmeticNet(PreTrainedModel):
 
         self.decoder_blocks = nn.ModuleList(
             [
-                GPT2Block(
+                EncDecTransformerBlock(
                     layer_index=index,
                     hidden_size=config.hidden_size,
                     num_heads=config.num_attn_heads,
                     dropout=config.dropout,
                     layer_norm_epsilon=config.layer_norm_epsilon,
                     activation_function=config.activation_function,
-                    autoregressive=True,
                 )
                 for index in range(config.num_layers)
             ]
@@ -103,60 +106,28 @@ class ArithmeticNet(PreTrainedModel):
         )  # pseudo-inverse of Embedding matrix which is used as the unembed.
         # Note: in the general case we could also have W_y_i as a learned matrix.
 
-        # TODO: Make model encoder-decoder.
-
-    def forward(
-        self,
-        input_ids: t.Tensor,
-        cache: Optional[FullKeyValueCache] = None,
-        confidence_scores: Optional[t.Tensor] = None,
-    ) -> Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
-        """
-        Args:
-            x (t.Tensor): shape (batch, seq), dtype t.int64 - the token ids
-            cache (Optional[FullKeyValueCache], optional): _description_. Defaults to None.
-
-        Returns:
-            Tuple[t.Tensor, FullKeyValueCache, PonderCache]:
-                output_logits: shape (batch, seq, vocab_size), dtype t.float32- the output logits
-                kv_cache
-                idk_logits: shape (batch, seq, 1), dtype t.float32 - the confidence scores for each
-                pre_idk_logits: shape (batch, seq, vocab_size), dtype t.float32 - the logits before the idk_logits are added
-        """
-        confidence_scores_list = []
-
-        if cache is None:
-            cache_list = [None] * len(self.blocks)  # type: ignore
-        else:
-            cache_list = cache.to_cache_list()
-
-        _batch_size, seq_len = input_ids.shape
-
+    def _encoder_forward(self, encoder_input_ids: t.Tensor) -> t.Tensor:
+        _batch_size, seq_len = encoder_input_ids.shape
         # Combine the token and position embeddings for the embedding layer
-        tokens = self.token_embedding(input_ids)  # (batch, seq, hidden_size)
+        tokens = self.token_embedding(encoder_input_ids)  # (batch, seq, hidden_size)
         positions = self.pos_embedding(t.arange(seq_len))  # (batch, seq, hidden_size)
         x = tokens + positions
         x = self.dropout(x)  # batch, seq, hidden_size
 
-        # Apply transformer blocks
-        for layer_index, block in enumerate(self.blocks):
-            x, layer_cache = block(
-                x, layer_cache=cache_list[layer_index]
-            )  # batch, seq, hidden_size
-            cache_list[layer_index] = layer_cache
+        # Apply encoder_transformer blocks
+        for layer_index, block in enumerate(self.encoder_blocks):
+            x, _ = block(x)  # batch, seq, hidden_size
 
-            # Compute confidence scores
-            confidence_scores_list.append(
-                self.confidence_score_linears[layer_index](x)
-            )  # batch, seq, 1
+        return x
 
-        y = self.final_layer_norm(x)  # batch, seq, hidden_size
-
+    def _get_idk_logits(self, confidence_scores_list: List[t.Tensor]) -> t.Tensor:
         # Get the confidence scores for each layer
         confidence_scores = t.stack(
             confidence_scores_list, dim=-1
         )  # batch, seq, 1, num_layers
         confidence_scores = confidence_scores.squeeze(2)  # batch, seq, num_layers
+
+        batch_size, seq_len, num_layers = confidence_scores.shape
 
         print("confidence_scores", confidence_scores.shape)
 
@@ -178,10 +149,42 @@ class ArithmeticNet(PreTrainedModel):
         idk_token_mask = repeat(
             idk_token_mask,
             "vocab_size -> batch seq vocab_size",
-            batch=_batch_size,
+            batch=batch_size,
             seq=seq_len,
         )  # batch, seq, vocab_size
         idk_logits = idk_logits * idk_token_mask  # batch, seq, vocab_size
+
+        return idk_logits
+
+    def _decoder_forward(
+        self,
+        decoder_input_ids: t.Tensor,
+        encoder_outputs: t.Tensor,
+        cache_list: Union[list[AttentionCache], list[None]],
+    ) -> Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
+        confidence_scores_list = []
+
+        _batch_size, seq_len = decoder_input_ids.shape
+
+        # Combine the token and position embeddings for the embedding layer
+        tokens = self.token_embedding(decoder_input_ids)  # (batch, seq, hidden_size)
+        positions = self.pos_embedding(t.arange(seq_len))  # (batch, seq, hidden_size)
+        x = tokens + positions
+        x = self.dropout(x)  # batch, seq, hidden_size
+
+        # Apply decoder transformer blocks
+        for layer_index, block in enumerate(self.decoder_blocks):
+            x, layer_cache = block(
+                x, encoder_output=encoder_outputs, layer_cache=cache_list[layer_index]
+            )  # batch, seq, hidden_size
+            cache_list[layer_index] = layer_cache
+
+            # Compute confidence scores
+            confidence_scores_list.append(
+                self.confidence_score_linears[layer_index](x)
+            )  # batch, seq, 1
+
+        y = self.final_layer_norm(x)  # batch, seq, hidden_size
 
         # Umbed the output back to the vocabulary size using the transpose of the token embedding as the umbedding matrix (i.e. tied embeddings)
         logits = einsum(
@@ -192,12 +195,48 @@ class ArithmeticNet(PreTrainedModel):
 
         pre_idk_logits = logits.clone()
 
+        idk_logits = self._get_idk_logits(confidence_scores_list)
+
         # Combine the logits with the idk_logits
         logits = logits + idk_logits  # batch, seq, vocab_size
 
         full_cache = FullKeyValueCache.from_cache_list(cache_list=cache_list)  # type: ignore
 
         return logits, full_cache, idk_logits, pre_idk_logits
+
+    def forward(
+        self,
+        encoder_input_ids: t.Tensor,
+        decoder_input_ids: t.Tensor,
+        cache: Optional[FullKeyValueCache] = None,
+        confidence_scores: Optional[t.Tensor] = None,
+        encoder_outputs: Optional[t.Tensor] = None,
+    ) -> Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
+        """
+        Args:
+            x (t.Tensor): shape (batch, seq), dtype t.int64 - the token ids
+            cache (Optional[FullKeyValueCache], optional): _description_. Defaults to None.
+
+        Returns:
+            Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
+                output_logits: shape (batch, seq, vocab_size), dtype t.float32- the output logits
+                kv_cache
+                idk_logits: shape (batch, seq, 1), dtype t.float32 - the confidence scores for each
+                pre_idk_logits: shape (batch, seq, vocab_size), dtype t.float32 - the logits before the idk_logits are added
+        """
+        if encoder_outputs is None:
+            encoder_outputs = self._encoder_forward(encoder_input_ids)
+
+        if cache is None:
+            cache_list = [None] * len(self.decoder_blocks)  # type: ignore
+        else:
+            cache_list = cache.to_cache_list()
+
+        output_logits, full_cache, idk_logits, pre_idk_logits = self._decoder_forward(
+            decoder_input_ids, encoder_outputs, cache_list=cache_list
+        )
+
+        return output_logits, full_cache, idk_logits, pre_idk_logits
 
 
 if __name__ == "__main__":
