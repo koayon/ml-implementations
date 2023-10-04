@@ -1,11 +1,8 @@
-from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-import tiktoken
 import torch as t
 import torch.nn.functional as F
 from einops import rearrange, repeat
-from jaxtyping import Float, Int
 from torch import nn
 from torch.distributions.categorical import Categorical
 from transformers import PretrainedConfig, PreTrainedModel
@@ -61,7 +58,7 @@ class ArithmeticNet(PreTrainedModel):
 
         self.dropout = nn.Dropout(config.dropout)
 
-        self.blocks = nn.ModuleList(
+        self.encoder_blocks = nn.ModuleList(
             [
                 GPT2Block(
                     layer_index=index,
@@ -70,6 +67,22 @@ class ArithmeticNet(PreTrainedModel):
                     dropout=config.dropout,
                     layer_norm_epsilon=config.layer_norm_epsilon,
                     activation_function=config.activation_function,
+                    autoregressive=False,
+                )
+                for index in range(config.num_layers)
+            ]
+        )
+
+        self.decoder_blocks = nn.ModuleList(
+            [
+                GPT2Block(
+                    layer_index=index,
+                    hidden_size=config.hidden_size,
+                    num_heads=config.num_attn_heads,
+                    dropout=config.dropout,
+                    layer_norm_epsilon=config.layer_norm_epsilon,
+                    activation_function=config.activation_function,
+                    autoregressive=True,
                 )
                 for index in range(config.num_layers)
             ]
@@ -89,6 +102,8 @@ class ArithmeticNet(PreTrainedModel):
             self.token_embedding.weight.T
         )  # pseudo-inverse of Embedding matrix which is used as the unembed.
         # Note: in the general case we could also have W_y_i as a learned matrix.
+
+        # TODO: Make model encoder-decoder.
 
     def forward(
         self,
