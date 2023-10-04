@@ -39,6 +39,7 @@ class GPT2Block(nn.Module):
         layer_norm_epsilon: float = 1e-5,
         activation_function: str = "new_gelu",
         group_size: int = 0,
+        autoregressive: bool = True,
     ):
         super().__init__()
 
@@ -56,7 +57,9 @@ class GPT2Block(nn.Module):
                 num_groups=num_heads // group_size,
             )
         else:
-            self.attn = UnidirectionalAttention(hidden_size, num_heads, dropout=dropout)
+            self.attn = UnidirectionalAttention(
+                hidden_size, num_heads, dropout=dropout, autoregressive=autoregressive
+            )
 
         # MLP part
 

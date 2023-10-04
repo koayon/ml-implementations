@@ -35,6 +35,7 @@ class UnidirectionalAttention(nn.Module):
         num_heads: int,
         head_size: Optional[int] = None,
         dropout=0.1,
+        autoregressive: bool = True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -54,6 +55,8 @@ class UnidirectionalAttention(nn.Module):
 
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
+
+        self.autoregressive = autoregressive
 
     def forward(
         self, x: t.Tensor, layer_cache: Optional[AttentionCache] = None
@@ -99,13 +102,16 @@ class UnidirectionalAttention(nn.Module):
         mask = t.tril(t.ones_like(q_k)).to(x.device)  # seq, seq
 
         # Use lower triangular mask for q_k matrix. Where mask is 0 (i.e. upper triangle), we set the attention score to -inf (which will be 0 post softmax)
-        masked_attention_scores = q_k.masked_fill(
-            mask == 0, float("-inf")
-        )  # batch, num_heads, seq, seq
+        if self.autoregressive:
+            masked_attention_scores = q_k.masked_fill(
+                mask == 0, float("-inf")
+            )  # batch, num_heads, seq, seq
 
-        attn_matrix = self.attn_dropout(
-            F.softmax(masked_attention_scores, dim=-1)
-        )  # seq, seq
+            attn_matrix = self.attn_dropout(
+                F.softmax(masked_attention_scores, dim=-1)
+            )  # seq, seq
+        else:
+            attn_matrix = self.attn_dropout(F.softmax(q_k, dim=-1))
 
         # For each query vector, combine with the weighted average value vector
         combined_with_v = einsum(
