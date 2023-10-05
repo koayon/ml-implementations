@@ -37,29 +37,27 @@ EVALUATE = True
 DEBUG = False
 
 
-def get_training_args(*, config: MoETConfig, debug: bool = False, deepspeed_config=None):
+def get_training_args(
+    *, config: MoETConfig, debug: bool = False, deepspeed_config=None
+):
     return TrainingArguments(
         output_dir="checkpoints",
         per_device_train_batch_size=config.batch_size,
         per_device_eval_batch_size=config.batch_size,
         learning_rate=config.learning_rate,
         weight_decay=config.weight_decay,
-
         deepspeed=deepspeed_config,  #  type: ignore
-
         # max_grad_norm = 1.0,
-
         # Optimizations
         # gradient_checkpointing = True
         # deepspeed = "deepspeed_config.json"
-
         # PyTorch 2.0 settings
         # bf16=True if t.cuda.is_available() else False, # bfloat16 training
         torch_compile=True if t.cuda.is_available() else False,  # optimizations
-        optim="adamw_torch_fused" if t.cuda.is_available(
-        ) else "adamw_hf",  # improved optimizer
+        optim="adamw_torch_fused"
+        if t.cuda.is_available()
+        else "adamw_hf",  # improved optimizer
         # eval_accumulation_steps=32,
-
         # Save, log, eval
         # num_train_epochs=config.num_epochs,
         max_steps=2 if debug else config.max_steps,
@@ -76,59 +74,65 @@ def get_training_args(*, config: MoETConfig, debug: bool = False, deepspeed_conf
     )
 
 
-def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Dataset, config: MoETConfig, debug: bool = False, tokenizer: PreTrainedTokenizerBase, data_collator: DataCollatorForLanguageModeling):
-
-    deepspeed_config = {
-        # "fp16": {
-        #     "enabled": "auto",
-        #     "loss_scale": 0,
-        #     "loss_scale_window": 1000,
-        #     "initial_scale_power": 16,
-        #     "hysteresis": 2,
-        #     "min_loss_scale": 1
-        # },
-
-        "optimizer": {
-            "type": "AdamW",
-            "params": {
-                "lr": "auto",
-                "betas": "auto",
-                "eps": "auto",
-                "weight_decay": "auto"
-            }
-        },
-
-        "scheduler": {
-            "type": "WarmupLR",
-            "params": {
-                "warmup_min_lr": "auto",
-                "warmup_max_lr": "auto",
-                "warmup_num_steps": "auto"
-            }
-        },
-
-        "zero_optimization": {
-            "stage": 3,
-            "offload_optimizer": {
-                "device": "cpu",
-                "pin_memory": True
+def get_trainer(
+    *,
+    model: nn.Module,
+    train_dataset: Dataset,
+    eval_dataset: Dataset,
+    config: MoETConfig,
+    debug: bool = False,
+    tokenizer: PreTrainedTokenizerBase,
+    data_collator: DataCollatorForLanguageModeling,
+):
+    deepspeed_config = (
+        {
+            # "fp16": {
+            #     "enabled": "auto",
+            #     "loss_scale": 0,
+            #     "loss_scale_window": 1000,
+            #     "initial_scale_power": 16,
+            #     "hysteresis": 2,
+            #     "min_loss_scale": 1
+            # },
+            "optimizer": {
+                "type": "AdamW",
+                "params": {
+                    "lr": "auto",
+                    "betas": "auto",
+                    "eps": "auto",
+                    "weight_decay": "auto",
+                },
             },
-            "allgather_partitions": True,
-            "allgather_bucket_size": 2e8,
-            "overlap_comm": True,
-            "reduce_scatter": True,
-            "reduce_bucket_size": 2e8,
-            "contiguous_gradients": True
-        },
-
-        "gradient_accumulation_steps": "auto",
-        "gradient_clipping": "auto",
-        "train_batch_size": "auto",
-        "train_micro_batch_size_per_gpu": "auto",
-    } if t.cuda.is_available() else None
+            "scheduler": {
+                "type": "WarmupLR",
+                "params": {
+                    "warmup_min_lr": "auto",
+                    "warmup_max_lr": "auto",
+                    "warmup_num_steps": "auto",
+                },
+            },
+            "zero_optimization": {
+                "stage": 3,
+                "offload_optimizer": {"device": "cpu", "pin_memory": True},
+                "allgather_partitions": True,
+                "allgather_bucket_size": 2e8,
+                "overlap_comm": True,
+                "reduce_scatter": True,
+                "reduce_bucket_size": 2e8,
+                "contiguous_gradients": True,
+            },
+            "gradient_accumulation_steps": "auto",
+            "gradient_clipping": "auto",
+            "train_batch_size": "auto",
+            "train_micro_batch_size_per_gpu": "auto",
+        }
+        if t.cuda.is_available()
+        else None
+    )
 
     training_args = get_training_args(
-        config=config, debug=debug,
+        config=config,
+        debug=debug,
         # deepspeed_config=deepspeed_config
     )
 
@@ -152,7 +156,7 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
         loss, _logits, _ = outputs
 
         # Perplexity
-        per_word_loss = sum(loss)/len(loss)
+        per_word_loss = sum(loss) / len(loss)
         perplexity = math.exp(per_word_loss)
 
         # print("perplexity", perplexity)
@@ -193,12 +197,19 @@ def get_trainer(*, model: nn.Module, train_dataset: Dataset, eval_dataset: Datas
     return trainer
 
 
-def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path: str, small_train_dataset: TextDataset, small_eval_dataset: TextDataset, data_collator: DataCollatorForLanguageModeling, training_args: TrainingArguments):
+def hyperparameter_sweep(
+    num_trials: int,
+    config: MoETConfig,
+    model_name_or_path: str,
+    small_train_dataset: TextDataset,
+    small_eval_dataset: TextDataset,
+    data_collator: DataCollatorForLanguageModeling,
+    training_args: TrainingArguments,
+):
     def wandb_hp_space(trial):
         return {
             "method": "random",
-            "metric": {"name": "loss",  # "objective"
-                       "goal": "minimize"},
+            "metric": {"name": "loss", "goal": "minimize"},  # "objective"
             "parameters": {
                 "learning_rate": {"distribution": "uniform", "min": 1e-6, "max": 1e-4},
                 "per_device_train_batch_size": {"values": [16, 32, 64, 128]},
@@ -233,17 +244,29 @@ def hyperparameter_sweep(num_trials: int, config: MoETConfig, model_name_or_path
 
 def get_df(path: str):
     if os.path.exists(path):
-        runs_df = pd.read_csv(path)
+        df = pd.read_csv(path)
     else:
-        runs_df = pd.DataFrame({"model_name": [], "experiment_name": [], "group": [
-        ], "train_loss": [], "eval_loss": [], "other_metrics": []})
-        runs_df.to_csv(path, index=False)
+        df = pd.DataFrame(
+            {
+                "model_name": [],
+                "experiment_name": [],
+                "group": [],
+                "train_loss": [],
+                "eval_loss": [],
+                "other_metrics": [],
+            }
+        )
+        df.to_csv(path, index=False)
 
-    return runs_df
+    return df
 
 
 def train_model(trainer: Trainer, config: MoETConfig, runs_df: pd.DataFrame, wandb):
-    with wandb.init(project=config.model_name, name=f"{config.model_name}_{EXPERIMENT_NAME}", group=EXPERIMENT_GROUP) as run:
+    with wandb.init(
+        project=config.model_name,
+        name=f"{config.model_name}_{EXPERIMENT_NAME}",
+        group=EXPERIMENT_GROUP,
+    ) as run:
         try:
             trainer.train()
             wandb.alert(title="Training complete", text="Training complete")
@@ -258,7 +281,14 @@ def train_model(trainer: Trainer, config: MoETConfig, runs_df: pd.DataFrame, wan
 
         print("Trainer state: ", trainer.state)
 
-        row_dict = {"model_name": config.model_name, "experiment_name": EXPERIMENT_NAME, "group": EXPERIMENT_GROUP, "train_loss": None, "eval_loss": trainer.state.best_metric, "other_metrics": None,}
+        row_dict = {
+            "model_name": config.model_name,
+            "experiment_name": EXPERIMENT_NAME,
+            "group": EXPERIMENT_GROUP,
+            "train_loss": None,
+            "eval_loss": trainer.state.best_metric,
+            "other_metrics": None,
+        }
 
         df_row = pd.DataFrame(row_dict, index=[0])
 
@@ -271,15 +301,24 @@ def train_model(trainer: Trainer, config: MoETConfig, runs_df: pd.DataFrame, wan
 
 
 def evaluate_model(trainer: Trainer, config: MoETConfig, evals_df: pd.DataFrame, wandb):
-
-    with wandb.init(project=config.model_name, name=f"{config.model_name}_{EXPERIMENT_NAME}", group=f"eval_{EXPERIMENT_GROUP}") as run:
+    with wandb.init(
+        project=config.model_name,
+        name=f"{config.model_name}_{EXPERIMENT_NAME}",
+        group=f"eval_{EXPERIMENT_GROUP}",
+    ) as run:
         metrics = trainer.evaluate()
         wandb.log(metrics)
 
         print(metrics)
 
-        row_dict = {"model_name": config.model_name, "experiment_name": EXPERIMENT_NAME, "group": EXPERIMENT_GROUP,
-                    "train_loss": None, "eval_loss": trainer.state.best_metric, "other_metrics": None, }
+        row_dict = {
+            "model_name": config.model_name,
+            "experiment_name": EXPERIMENT_NAME,
+            "group": EXPERIMENT_GROUP,
+            "train_loss": None,
+            "eval_loss": trainer.state.best_metric,
+            "other_metrics": None,
+        }
 
         df_row = pd.DataFrame(row_dict, index=[0])
 
@@ -310,9 +349,15 @@ def main():
     assert isinstance(dataset, DatasetDict)
     print(f"Example from dataset: \n {dataset['train'][0]}")
 
-    processed_dataset = dataset.map(lambda x: tokenizer(x["text"],
-                                                        padding="max_length", max_length=config.block_size,
-                                                        truncation=True), batched=True)
+    processed_dataset = dataset.map(
+        lambda x: tokenizer(
+            x["text"],
+            padding="max_length",
+            max_length=config.block_size,
+            truncation=True,
+        ),
+        batched=True,
+    )
     processed_dataset.set_format(type="torch", columns=["input_ids"])
     # processed_dataset = processed_dataset.remove_columns("attention_mask")
 
@@ -327,21 +372,25 @@ def main():
     runs_df = get_df("runs.csv")
     evals_df = get_df("evals.csv")
 
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer, mlm=False)
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    trainer = get_trainer(model=model, train_dataset=train_dataset, eval_dataset=small_eval_dataset,
-                          config=config, tokenizer=tokenizer, debug=DEBUG, data_collator=data_collator)
+    trainer = get_trainer(
+        model=model,
+        train_dataset=train_dataset,
+        eval_dataset=small_eval_dataset,
+        config=config,
+        tokenizer=tokenizer,
+        debug=DEBUG,
+        data_collator=data_collator,
+    )
 
     wandb.login()
 
     if TRAIN:
-        train_model(trainer=trainer, config=config,
-                    runs_df=runs_df, wandb=wandb)
+        train_model(trainer=trainer, config=config, runs_df=runs_df, wandb=wandb)
 
     if EVALUATE:
-        evaluate_model(trainer=trainer, config=config,
-                       evals_df=evals_df, wandb=wandb)
+        evaluate_model(trainer=trainer, config=config, evals_df=evals_df, wandb=wandb)
 
     # prompt = eval_dataset.select([10])
     # output = trainer.predict(prompt) # type: ignore
