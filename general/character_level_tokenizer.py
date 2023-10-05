@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 CHARACTER_VOCAB = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.'!? +-*/=()[]<>%^&*~"
 
@@ -45,6 +45,24 @@ class CharTokenizer:
 
     def batch_decode(self, tokens: List[List[int]]) -> List[str]:
         return [self.decode(token) for token in tokens]
+
+    def pad(
+        self,
+        encoding: List[List[int]],
+        max_length: Optional[int] = None,
+        padding_value: Optional[int] = None,
+        pad_to_multiple_of: Optional[int] = None,
+        return_tensors="pt",
+        padding: bool = True,
+    ) -> List[List[int]]:
+        # if max_length is None:
+        #     max_length = max(len(seq) for seq in encoding)
+        # if padding_value is None:
+        #     padding_value = self.pad_token_id
+
+        # return [seq + [padding_value] * (max_length - len(seq)) for seq in encoding]
+
+        return encoding
 
 
 # Example usage
