@@ -52,9 +52,6 @@ class CrossAttentionLayer(nn.Module):
         q = self.q_proj(x)  # batch, seq, head_size*num_heads
         kv = self.kv_proj(encoder_outputs)  # batch, seq, head_size*num_heads*2
 
-        print(kv.shape)
-        print(kv)
-
         k, v = t.split(
             kv, self.head_size * self.num_heads, dim=-1
         )  # batch, seq, head_size*num_heads
@@ -83,10 +80,6 @@ class AttentionMechanism(nn.Module):
         self.num_heads = num_heads
 
         self.output_proj = nn.Linear((num_heads * head_size), hidden_size)  # W_O
-
-        print("self.num_heads", self.num_heads)
-        print("self.head_size", head_size)
-        print("self.hidden_size", self.hidden_size)
 
         self.attn_scale = 1.0 / math.sqrt(head_size)
 
@@ -154,7 +147,9 @@ class AttentionMechanism(nn.Module):
                 F.softmax(masked_attention_scores, dim=-1)
             )  # seq, seq
         else:
-            attn_matrix = self.attn_dropout(F.softmax(q_k, dim=-1))
+            attn_matrix = self.attn_dropout(F.softmax(q_k, dim=-1))  # seq, seq
+
+        print(attn_matrix)
 
         # For each query vector, combine with the weighted average value vector
         combined_with_v = einsum(
@@ -183,11 +178,15 @@ class AttentionMechanism(nn.Module):
         """Forward using cached attention keys and values."""
 
         # Grab the cached keys and values
-        cached_k, cached_v = (layer_cache.k, layer_cache.v)  # (batch, head, seq, dim)
+        cached_k, cached_v = (layer_cache.k, layer_cache.v)  # (batch, seq, hidden_dim)
+
+        print("cached_k", cached_k.shape)
 
         q_final_row = q[:, -1:, :]  # (batch, 1, num_heads * head_size)
         k_final_row = k[:, -1:, :]  # (batch, 1, num_heads * head_size)
         v_final_row = v[:, -1:, :]  # (batch, 1, num_heads * head_size)
+
+        print("k_final_row", k_final_row.shape)
 
         # Concatenate K and V with to get the full matrices
         k_full = t.cat([cached_k, k_final_row], dim=1)  # (batch, seq + 1, dim)
@@ -233,8 +232,8 @@ class AttentionMechanism(nn.Module):
             "batch head 1 head_size -> batch 1 (head head_size)",
         )
 
-        print(combined_with_v_final_row.shape)
-        print(self.output_proj.weight.shape)
+        # print(combined_with_v_final_row.shape)
+        # print(self.output_proj.weight.shape)
 
         # Apply W_O to the combined vectors
         final_token_output = self.output_proj(
@@ -245,11 +244,26 @@ class AttentionMechanism(nn.Module):
 
 
 if __name__ == "__main__":
-    attention = CrossAttentionLayer(
-        encoder_hidden_size=512, decoder_hidden_size=512, num_heads=8, head_size=64
+    # attention = CrossAttentionLayer(
+    #     encoder_hidden_size=512, decoder_hidden_size=512, num_heads=8, head_size=64
+    # )
+    # x = t.randn(2, 10, 512)
+    # encoder_outputs = t.randn(2, 10, 512)
+    # out = attention(x, encoder_outputs, None)
+    # print(out)
+    # print(out.shape)
+
+    # attn_mechanism = AttentionMechanism(hidden_size=16, num_heads=2, head_size=8)
+    # x = t.randn(2, 3, 512)
+    # k = t.randn(2, 3, 16)
+    # q = t.randn(2, 3, 16)
+    # v = t.randn(2, 3, 16)
+
+    # out, layer_cache = attn_mechanism(x, k=k, q=q, v=v, layer_cache=None)
+
+    cross_attn = CrossAttentionLayer(
+        encoder_hidden_size=16, decoder_hidden_size=16, num_heads=2, head_size=8
     )
-    x = t.randn(2, 10, 512)
-    encoder_outputs = t.randn(2, 10, 512)
-    out = attention(x, encoder_outputs, None)
-    print(out)
-    print(out.shape)
+    x = t.randn(2, 3, 16)
+    encoder_outputs = t.randn(2, 4, 16)
+    out, layer_cache = cross_attn(x, encoder_outputs, None)

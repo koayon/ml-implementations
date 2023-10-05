@@ -239,6 +239,8 @@ class ArithmeticNet(PreTrainedModel):
                 tokenizer.sos_token_id,
             )
 
+        print("encoder_outputs", encoder_outputs.shape)
+
         output_logits, full_cache, idk_logits, pre_idk_logits = self._decoder_forward(
             decoder_input_ids, encoder_outputs, cache_list=cache_list
         )

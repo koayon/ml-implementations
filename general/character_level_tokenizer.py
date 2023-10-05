@@ -65,14 +65,19 @@ class CharTokenizer:
         return encoding
 
 
-# Example usage
-tokenizer = CharTokenizer()
+def main():
+    # Example usage
+    tokenizer = CharTokenizer()
 
-# Tokenizing
-text = "Hello, world!"
-tokens = tokenizer.encode(text)
-print(f"Tokens: {tokens}")
+    # Tokenizing
+    text = "Hello, world!"
+    tokens = tokenizer.encode(text)
+    print(f"Tokens: {tokens}")
 
-# Detokenizing
-detokenized_text = tokenizer.decode(tokens)
-print(f"Detokenized Text: {detokenized_text}")
+    # Detokenizing
+    detokenized_text = tokenizer.decode(tokens)
+    print(f"Detokenized Text: {detokenized_text}")
+
+
+if __name__ == "__main__":
+    main()
