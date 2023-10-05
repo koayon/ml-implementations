@@ -25,7 +25,7 @@ def make_input_output_pairs(n: int = 10) -> tuple[list[str], list[str]]:
     return input_strs, output_strs
 
 
-def get_dataloader() -> DataLoader:
+def get_dataset() -> Dataset:
     input_strs, output_strs = make_input_output_pairs(10)
     # print(input_strs)
     # print(output_strs)
@@ -45,13 +45,13 @@ def get_dataloader() -> DataLoader:
     dataset = TensorDataset(input_tensors, target_tensors)
 
     # Turn into a dataloader
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    # dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
-    return dataloader
+    return dataset
 
 
 def main():
-    dataloader = get_dataloader()
+    dataloader = get_dataset()
 
     for batch in dataloader:
         print(batch)
