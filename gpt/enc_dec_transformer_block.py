@@ -2,9 +2,10 @@ from collections import OrderedDict
 from typing import Any, List, Optional, Tuple, Union
 
 import torch as t
+import torch.nn as nn
+import torch.optim as optim
 import transformers
-from einops import rearrange
-from torch import nn
+from einops import rearrange, repeat
 from transformers.activations import NewGELUActivation
 
 from gpt.cached_attention import AttentionCache, UnidirectionalAttention
@@ -89,7 +90,7 @@ class EncDecTransformerBlock(nn.Module):
         Return: shape (batch, seq, hidden_size)
         """
         y = self.ln1(x)
-        y, layer_cache = self.self_attn(y, layer_cache=layer_cache)
+        y, _ = self.self_attn(y, layer_cache=layer_cache)
 
         x = x + y
 
@@ -103,10 +104,36 @@ class EncDecTransformerBlock(nn.Module):
         return x, layer_cache
 
 
+def train(batch_size=1000, num_epochs=1000, seq_len=2, hidden_size=16, num_heads=2):
+    model = EncDecTransformerBlock(
+        layer_index=0, hidden_size=hidden_size, num_heads=num_heads
+    )
+    encoder_output = t.rand(batch_size, seq_len, hidden_size)
+    signal = repeat(
+        t.rand(1, seq_len, hidden_size),
+        "1 seq hidden_dim -> batch seq hidden_dim",
+        batch=batch_size,
+    )
+    noise = t.randn(batch_size, seq_len, hidden_size) / 10
+    x = signal + noise
+
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+    # Trying to reconstruct the signal
+    for epoch in range(num_epochs):
+        optimizer.zero_grad()
+        y, _ = model(x, encoder_output)
+        loss = t.sum((y - signal) ** 2)
+        loss.backward()
+        optimizer.step()
+        print(f"Epoch {epoch}, {loss/batch_size}")
+
+
 if __name__ == "__main__":
     # Test GPT2Block
-    block = EncDecTransformerBlock(layer_index=0)
-    x = t.rand(2, 10, 768)
-    y: t.Tensor = block(x)
-    print(y.shape)
-    print(y)
+    train()
+    # block = EncDecTransformerBlock(layer_index=0)
+    # x = t.rand(2, 10, 768)
+    # y: t.Tensor = block(x)
+    # print(y.shape)
+    # print(y)
