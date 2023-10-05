@@ -39,16 +39,25 @@ class CrossAttentionLayer(nn.Module):
         self.kv_proj = nn.Linear(encoder_hidden_size, self.head_size * num_heads * 2)
 
         self.attention = AttentionMechanism(
-            self.head_size, num_heads, dropout=dropout, masked=False
+            hidden_size=decoder_hidden_size,
+            head_size=self.head_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            masked=False,
         )
 
     def forward(
-        self, x: t.Tensor, encoder_output: t.Tensor, layer_cache: AttentionCache
+        self, x: t.Tensor, encoder_outputs: t.Tensor, layer_cache: AttentionCache
     ) -> Tuple[t.Tensor, AttentionCache]:
         q = self.q_proj(x)  # batch, seq, head_size*num_heads
-        kv = self.kv_proj(encoder_output)  # batch, seq, head_size*num_heads*2
+        kv = self.kv_proj(encoder_outputs)  # batch, seq, head_size*num_heads*2
 
-        k, v = t.split(kv, self.head_size, dim=-1)  # batch, seq, head_size*num_heads
+        print(kv.shape)
+        print(kv)
+
+        k, v = t.split(
+            kv, self.head_size * self.num_heads, dim=-1
+        )  # batch, seq, head_size*num_heads
 
         out, layer_cache = self.attention(
             x, q=q, k=k, v=v, layer_cache=layer_cache
@@ -64,22 +73,22 @@ class AttentionMechanism(nn.Module):
         self,
         hidden_size: int,
         num_heads: int,
-        head_size: Optional[int] = None,
+        head_size: int,
         dropout=0.1,
         masked: bool = True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
-        assert hidden_size % num_heads == 0
-
+        self.head_size = head_size
         self.num_heads = num_heads
-        self.head_size = hidden_size // num_heads if head_size is None else head_size
 
-        self.output_proj = nn.Linear(
-            (self.num_heads * self.head_size), hidden_size
-        )  # W_O
+        self.output_proj = nn.Linear((num_heads * head_size), hidden_size)  # W_O
 
-        self.attn_scale = 1.0 / math.sqrt(self.head_size)
+        print("self.num_heads", self.num_heads)
+        print("self.head_size", head_size)
+        print("self.hidden_size", self.hidden_size)
+
+        self.attn_scale = 1.0 / math.sqrt(head_size)
 
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
@@ -223,6 +232,9 @@ class AttentionMechanism(nn.Module):
             combined_with_v_final_row,
             "batch head 1 head_size -> batch 1 (head head_size)",
         )
+
+        print(combined_with_v_final_row.shape)
+        print(self.output_proj.weight.shape)
 
         # Apply W_O to the combined vectors
         final_token_output = self.output_proj(

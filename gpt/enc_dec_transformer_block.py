@@ -60,6 +60,7 @@ class EncDecTransformerBlock(nn.Module):
             decoder_hidden_size=hidden_size,
             num_heads=num_heads,
             dropout=dropout,
+            head_size=hidden_size // num_heads,
         )
 
         # MLP part
@@ -77,7 +78,10 @@ class EncDecTransformerBlock(nn.Module):
         )
 
     def forward(
-        self, x: t.Tensor, layer_cache: Optional[AttentionCache] = None
+        self,
+        x: t.Tensor,
+        encoder_outputs: t.Tensor,
+        layer_cache: Optional[AttentionCache] = None,
     ) -> Tuple[t.Tensor, Optional[AttentionCache]]:
         """
         x: shape (batch, seq, hidden_size)
@@ -90,7 +94,9 @@ class EncDecTransformerBlock(nn.Module):
         x = x + y
 
         y = self.ln2(x)
-        y, layer_cache = self.cross_attn(y, layer_cache=layer_cache)
+        y, layer_cache = self.cross_attn(
+            y, encoder_outputs=encoder_outputs, layer_cache=layer_cache
+        )
 
         x = x + self.MLP(x)
 
