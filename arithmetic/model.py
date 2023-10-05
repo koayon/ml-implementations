@@ -209,7 +209,6 @@ class ArithmeticNet(PreTrainedModel):
         encoder_input_ids: t.Tensor,
         decoder_input_ids: t.Tensor,
         cache: Optional[FullKeyValueCache] = None,
-        confidence_scores: Optional[t.Tensor] = None,
         encoder_outputs: Optional[t.Tensor] = None,
     ) -> Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
         """
