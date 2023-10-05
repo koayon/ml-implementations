@@ -1,11 +1,9 @@
-from json import encoder
+from json import decoder, encoder
 from typing import Any, List, Optional, Tuple, Union
 
 import torch as t
 import torch.nn.functional as F
 from einops import rearrange, repeat
-from regex import W
-from spacy.tests.parser.test_nn_beam import batch_size
 from torch import nn
 from torch.distributions.categorical import Categorical
 from transformers import PretrainedConfig, PreTrainedModel
@@ -23,7 +21,7 @@ tokenizer = CharTokenizer()
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 
-config = ArithmeticConfig()
+model_config = ArithmeticConfig()
 
 
 class ArithmeticNet(PreTrainedModel):
@@ -45,35 +43,36 @@ class ArithmeticNet(PreTrainedModel):
 
     def __init__(
         self,
-        config: ArithmeticConfig = config,
+        model_config: ArithmeticConfig = model_config,
         hf_config=PretrainedConfig(),
         training: bool = True,
     ):
         super().__init__(config=hf_config)
 
-        self.config = config
+        self.model_config = model_config
         self.vocab_size = len(tokenizer)
         self.training = training
+        self.batch_size = model_config.batch_size
 
-        self.token_embedding = nn.Embedding(self.vocab_size, config.hidden_size)
+        self.token_embedding = nn.Embedding(self.vocab_size, model_config.hidden_size)
         self.pos_embedding = nn.Embedding(
-            config.max_position_embeddings, config.hidden_size
+            model_config.max_position_embeddings, model_config.hidden_size
         )
 
-        self.dropout = nn.Dropout(config.dropout)
+        self.dropout = nn.Dropout(model_config.dropout)
 
         self.encoder_blocks = nn.ModuleList(
             [
                 GPT2Block(
                     layer_index=index,
-                    hidden_size=config.hidden_size,
-                    num_heads=config.num_attn_heads,
-                    dropout=config.dropout,
-                    layer_norm_epsilon=config.layer_norm_epsilon,
-                    activation_function=config.activation_function,
+                    hidden_size=model_config.hidden_size,
+                    num_heads=model_config.num_attn_heads,
+                    dropout=model_config.dropout,
+                    layer_norm_epsilon=model_config.layer_norm_epsilon,
+                    activation_function=model_config.activation_function,
                     autoregressive=False,
                 )
-                for index in range(config.num_layers)
+                for index in range(model_config.num_layers)
             ]
         )
 
@@ -81,24 +80,27 @@ class ArithmeticNet(PreTrainedModel):
             [
                 EncDecTransformerBlock(
                     layer_index=index,
-                    hidden_size=config.hidden_size,
-                    num_heads=config.num_attn_heads,
-                    dropout=config.dropout,
-                    layer_norm_epsilon=config.layer_norm_epsilon,
-                    activation_function=config.activation_function,
+                    hidden_size=model_config.hidden_size,
+                    num_heads=model_config.num_attn_heads,
+                    dropout=model_config.dropout,
+                    layer_norm_epsilon=model_config.layer_norm_epsilon,
+                    activation_function=model_config.activation_function,
                 )
-                for index in range(config.num_layers)
+                for index in range(model_config.num_layers)
             ]
         )
 
         self.confidence_score_linears: nn.ModuleList = nn.ModuleList(
-            [nn.Linear(config.hidden_size, 1) for _ in range(config.num_layers)]
+            [
+                nn.Linear(model_config.hidden_size, 1)
+                for _ in range(model_config.num_layers)
+            ]
         )
 
-        self.confidence_combine = nn.Linear(config.num_layers, 1)
+        self.confidence_combine = nn.Linear(model_config.num_layers, 1)
 
         self.final_layer_norm = nn.LayerNorm(
-            config.hidden_size, eps=config.layer_norm_epsilon
+            model_config.hidden_size, eps=model_config.layer_norm_epsilon
         )
 
         self.unembedding = (
@@ -175,7 +177,7 @@ class ArithmeticNet(PreTrainedModel):
         # Apply decoder transformer blocks
         for layer_index, block in enumerate(self.decoder_blocks):
             x, layer_cache = block(
-                x, encoder_output=encoder_outputs, layer_cache=cache_list[layer_index]
+                x, encoder_outputs=encoder_outputs, layer_cache=cache_list[layer_index]
             )  # batch, seq, hidden_size
             cache_list[layer_index] = layer_cache
 
@@ -207,7 +209,7 @@ class ArithmeticNet(PreTrainedModel):
     def forward(
         self,
         encoder_input_ids: t.Tensor,
-        decoder_input_ids: t.Tensor,
+        decoder_input_ids: Optional[t.Tensor] = None,
         cache: Optional[FullKeyValueCache] = None,
         encoder_outputs: Optional[t.Tensor] = None,
     ) -> Tuple[t.Tensor, FullKeyValueCache, t.Tensor, t.Tensor]:
@@ -231,6 +233,12 @@ class ArithmeticNet(PreTrainedModel):
         else:
             cache_list = cache.to_cache_list()
 
+        if decoder_input_ids is None:
+            decoder_input_ids = t.full(
+                (self.batch_size, 1),
+                tokenizer.sos_token_id,
+            )
+
         output_logits, full_cache, idk_logits, pre_idk_logits = self._decoder_forward(
             decoder_input_ids, encoder_outputs, cache_list=cache_list
         )
@@ -239,7 +247,7 @@ class ArithmeticNet(PreTrainedModel):
 
 
 if __name__ == "__main__":
-    model = ArithmeticNet(config, training=True)
+    model = ArithmeticNet(model_config, training=True)
 
     text = "2 + 5 = "
     inputs_ids = tokenizer.encode(text)
@@ -250,4 +258,4 @@ if __name__ == "__main__":
     print(logits)
     print(logits.shape)
 
-    print(model.config)
+    print(model.model_config)
