@@ -18,41 +18,65 @@ class CustomTrainer(Trainer):
         self.idk_penalty = idk_penalty
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        logits: t.Tensor
+        logits: t.Tensor  # [batch, seq, vocab_size]
 
-        # Separate the tuples into two lists: inputs and outputs
-        input_ids = [item[0] for item in inputs]
-        target_ids = [item[1] for item in inputs]
+        print("inputs", inputs)
 
-        # Stack the lists to create input and output tensors
-        input_tensor = t.stack(input_ids)  # batch, seq
-        output_tensor = t.stack(target_ids)  # batch, seq
+        # input_ids = [item["encoder_input_ids"] for item in inputs]
+        # target_ids = [item["label_ids"] for item in inputs]
 
-        outputs = model(encoder_input_ids=input_tensor, decoder_input_ids=output_tensor)
+        input_ids = inputs["encoder_input_ids"]
+        target_ids = inputs["labels"]
+
+        # # Stack the lists to create input and output tensors
+        # input_tensor = t.stack(input_ids)  # batch, seq
+        # output_tensor = t.stack(target_ids)  # batch, seq
+
+        outputs = model(
+            encoder_input_ids=input_ids, decoder_input_ids=target_ids[:, :-1]
+        )
         logits, full_cache, idk_logits, pre_idk_logits = outputs
 
-        # TODO: Edit the generate function. What we need is for the model to autoregressively generate the whole output (which might be longer than the target and contain idk tokens)
-        # Then we put this through the below loss function.
-
         print(logits.shape)
-        print(target_ids)
+        print("logits", logits)
 
-        # Get strip out all idk tokens from the output and instead give a penalty as n*pen for the number of idk tokens
-
-        # logits [batch, seq, vocab_size]
         criterion = nn.CrossEntropyLoss(reduction="none")
         flattened_logits = rearrange(logits, "b s v -> (b s) v")
-        flattened_labels = rearrange(target_ids, "b s -> (b s)")
+        flattened_labels = rearrange(target_ids[:, 1:], "b s -> (b s)")
 
+        # Get predictions
+        predictions = t.argmax(flattened_logits, dim=-1)
+        print("predictions", predictions)
+
+        # print("logits", logits)
+        print("labels", flattened_labels)
+
+        print("flattened_logits", flattened_logits.shape)
+        print("flattened_labels", flattened_labels.shape)
+
+        # TODO: Currently acting as oracle
+        # Secondly, issue with the eval script
+
+        loss = t.sum(criterion(flattened_logits, flattened_labels))
+
+        print("loss", loss)
+
+        return (loss, outputs) if return_outputs else loss
+
+    def compute_generate_loss(self, model, inputs, return_outputs=False):
+        # Edit the generate function. What we need is for the model to autoregressively generate the whole output (which might be longer than the target and contain idk tokens)
+        # Then we put this through the below loss function.
+
+        raise NotImplementedError
         skipped_idk_tokens = (
             flattened_logits[:, tokenizer.idk_token_id] > 2.0
         )  # batch*seq
         skipped_idk_tokens_list = skipped_idk_tokens.tolist()
+        # Get strip out all idk tokens from the output and instead give a penalty as n*pen for the number of idk tokens
 
         flattened_logits_list = flattened_logits.tolist()
 
         print(skipped_idk_tokens_list)
-        assert False
 
         # Remove the columns in the logits that correspond to the idk tokens
         penalty = 0
@@ -61,32 +85,26 @@ class CustomTrainer(Trainer):
                 flattened_logits_list.pop(i)
                 penalty += self.idk_penalty
 
-        flattened_logits = t.tensor(flattened_logits_list)
-
-        loss = criterion(flattened_logits, flattened_labels)
-        loss = loss.sum() + penalty
-
-        return (loss, outputs) if return_outputs else loss
-
 
 def main():
     dataset = get_dataset()
+    print(dataset)
+
     model = ArithmeticNet(training=True)
 
     training_args = TrainingArguments(
-        output_dir="./output",
+        output_dir="checkpoints",
         num_train_epochs=10,
         per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        # per_device_eval_batch_size=8,
         warmup_steps=500,
         weight_decay=0.01,
-        logging_dir="./logs",
         logging_steps=10,
         evaluation_strategy="steps",
         load_best_model_at_end=True,
         save_total_limit=1,
         save_steps=10,
-        eval_steps=10,
+        # eval_steps=10,
         no_cuda=False,
         seed=42,
         fp16=False,
@@ -97,7 +115,7 @@ def main():
         model=model,
         train_dataset=dataset,
         eval_dataset=dataset,
-        tokenizer=tokenizer,
+        # tokenizer=tokenizer,
         args=training_args,
         idk_penalty=0.1,
     )

@@ -131,13 +131,13 @@ class ArithmeticNet(PreTrainedModel):
 
         batch_size, seq_len, num_layers = confidence_scores.shape
 
-        print("confidence_scores", confidence_scores.shape)
+        # print("confidence_scores", confidence_scores.shape)
 
         idk_logits: t.Tensor = self.confidence_combine(
             confidence_scores
         )  # batch, seq, 1
 
-        print("idk_logits", idk_logits.shape)
+        # print("idk_logits", idk_logits.shape)
 
         idk_logits = repeat(
             idk_logits,
@@ -239,7 +239,7 @@ class ArithmeticNet(PreTrainedModel):
                 tokenizer.sos_token_id,
             )
 
-        print("encoder_outputs", encoder_outputs.shape)
+        # print("encoder_outputs", encoder_outputs.shape)
 
         output_logits, full_cache, idk_logits, pre_idk_logits = self._decoder_forward(
             decoder_input_ids, encoder_outputs, cache_list=cache_list

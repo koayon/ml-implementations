@@ -149,7 +149,7 @@ class AttentionMechanism(nn.Module):
         else:
             attn_matrix = self.attn_dropout(F.softmax(q_k, dim=-1))  # seq, seq
 
-        print(attn_matrix)
+        # print(attn_matrix)
 
         # For each query vector, combine with the weighted average value vector
         combined_with_v = einsum(
@@ -180,13 +180,13 @@ class AttentionMechanism(nn.Module):
         # Grab the cached keys and values
         cached_k, cached_v = (layer_cache.k, layer_cache.v)  # (batch, seq, hidden_dim)
 
-        print("cached_k", cached_k.shape)
+        # print("cached_k", cached_k.shape)
 
         q_final_row = q[:, -1:, :]  # (batch, 1, num_heads * head_size)
         k_final_row = k[:, -1:, :]  # (batch, 1, num_heads * head_size)
         v_final_row = v[:, -1:, :]  # (batch, 1, num_heads * head_size)
 
-        print("k_final_row", k_final_row.shape)
+        # print("k_final_row", k_final_row.shape)
 
         # Concatenate K and V with to get the full matrices
         k_full = t.cat([cached_k, k_final_row], dim=1)  # (batch, seq + 1, dim)

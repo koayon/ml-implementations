@@ -50,6 +50,9 @@ class CustomDataset(Dataset):
         return {
             "encoder_input_ids": self.input_tensors[idx],
             "label_ids": self.target_tensors[idx],
+            "target_ids": self.target_tensors[idx][:, 1:],
+            "decoder_input_ids": self.target_tensors[idx][:, :-1],
+            "labels": self.target_tensors[idx][:, :-1],
         }
 
 
@@ -64,7 +67,9 @@ def get_dataset() -> Dataset:
     ]
     target_tensors = [
         t.tensor(
-            idk_tokens * [tokenizer.idk_token_id] + tokenizer.encode(text),
+            [tokenizer.sos_token_id]
+            + idk_tokens * [tokenizer.idk_token_id]
+            + tokenizer.encode(text),
             dtype=t.long,
         )
         for text, idk_tokens in zip(output_strs, num_idk_tokens)
