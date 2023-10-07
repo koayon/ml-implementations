@@ -1,3 +1,4 @@
+import numpy as np
 import torch as t
 import torch.nn as nn
 from einops import rearrange
@@ -11,16 +12,16 @@ tokenizer = CharTokenizer()
 
 
 class CustomTrainer(Trainer):
-    def __init__(self, idk_penalty: float = 0.1, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.idk_penalty = idk_penalty
 
     def compute_loss(self, model, inputs, return_outputs=False):
         logits: t.Tensor  # [batch, seq, vocab_size]
 
         encoder_input_ids = inputs["encoder_input_ids"]
         target_ids = inputs["labels"]
-        decoder_input_ids = inputs["decoder_input_ids"]
+        decoder_input_ids = target_ids[:, :-1]
+        label_ids = target_ids[:, 1:]
 
         outputs = model(
             encoder_input_ids=encoder_input_ids, decoder_input_ids=decoder_input_ids
@@ -31,7 +32,7 @@ class CustomTrainer(Trainer):
 
         criterion = nn.CrossEntropyLoss(reduction="none")
         flattened_logits = rearrange(logits, "b s v -> (b s) v")
-        flattened_labels = rearrange(target_ids, "b s -> (b s)")
+        flattened_labels = rearrange(label_ids, "b s -> (b s)")
 
         # Get predictions
         # predictions = t.argmax(flattened_logits, dim=-1)
@@ -42,7 +43,7 @@ class CustomTrainer(Trainer):
 
         # print("loss", loss)
 
-        return (loss, outputs) if return_outputs else loss
+        return (loss, logits) if return_outputs else loss
 
     def compute_generate_loss(self, model, inputs, return_outputs=False):
         # Edit the generate function. What we need is for the model to autoregressively generate the whole output (which might be longer than the target and contain idk tokens)
@@ -67,7 +68,7 @@ class CustomTrainer(Trainer):
                 penalty += self.idk_penalty
 
 
-def main():
+def main(num_train_epochs=10_000):
     dataset = get_dataset()
     print(dataset)
 
@@ -75,17 +76,18 @@ def main():
 
     training_args = TrainingArguments(
         output_dir="checkpoints",
-        num_train_epochs=1000,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        # warmup_steps=500,
+        num_train_epochs=num_train_epochs,
+        per_device_train_batch_size=10,
+        per_device_eval_batch_size=10,
+        learning_rate=1e-3,
+        warmup_steps=50,
         weight_decay=0.01,
-        logging_steps=50,
+        logging_steps=num_train_epochs // 100,
         evaluation_strategy="steps",
         load_best_model_at_end=True,
         save_total_limit=1,
         # save_steps=10,
-        # eval_steps=10,
+        eval_steps=num_train_epochs // 10,
         no_cuda=False,
         seed=42,
         fp16=False,
@@ -98,10 +100,18 @@ def main():
         eval_dataset=dataset,
         # tokenizer=tokenizer,
         args=training_args,
-        idk_penalty=0.1,
     )
 
     trainer.train()
+
+    print("Trained!")
+
+    predict_outputs = trainer.predict(dataset)
+
+    logits: np.ndarray = predict_outputs.predictions  # type: ignore # [batch, seq, vocab_size]
+    preds = np.argmax(logits, axis=-1)
+    print("preds", preds)
+    print("true labels", predict_outputs.label_ids[:, 1:])  # type: ignore
 
     # print(trainer.state)
 
