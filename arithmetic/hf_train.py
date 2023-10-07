@@ -1,5 +1,3 @@
-from re import T
-
 import torch as t
 import torch.nn as nn
 from einops import rearrange
@@ -20,46 +18,29 @@ class CustomTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         logits: t.Tensor  # [batch, seq, vocab_size]
 
-        print("inputs", inputs)
-
-        # input_ids = [item["encoder_input_ids"] for item in inputs]
-        # target_ids = [item["label_ids"] for item in inputs]
-
-        input_ids = inputs["encoder_input_ids"]
+        encoder_input_ids = inputs["encoder_input_ids"]
         target_ids = inputs["labels"]
-
-        # # Stack the lists to create input and output tensors
-        # input_tensor = t.stack(input_ids)  # batch, seq
-        # output_tensor = t.stack(target_ids)  # batch, seq
+        decoder_input_ids = inputs["decoder_input_ids"]
 
         outputs = model(
-            encoder_input_ids=input_ids, decoder_input_ids=target_ids[:, :-1]
+            encoder_input_ids=encoder_input_ids, decoder_input_ids=decoder_input_ids
         )
         logits, full_cache, idk_logits, pre_idk_logits = outputs
 
-        print(logits.shape)
-        print("logits", logits)
+        batch_size, seq_len, vocab_size = logits.shape
 
         criterion = nn.CrossEntropyLoss(reduction="none")
         flattened_logits = rearrange(logits, "b s v -> (b s) v")
-        flattened_labels = rearrange(target_ids[:, 1:], "b s -> (b s)")
+        flattened_labels = rearrange(target_ids, "b s -> (b s)")
 
         # Get predictions
-        predictions = t.argmax(flattened_logits, dim=-1)
-        print("predictions", predictions)
+        # predictions = t.argmax(flattened_logits, dim=-1)
+        # print("predictions", predictions)
+        # print("labels", flattened_labels)
 
-        # print("logits", logits)
-        print("labels", flattened_labels)
+        loss = t.sum(criterion(flattened_logits, flattened_labels)) / batch_size
 
-        print("flattened_logits", flattened_logits.shape)
-        print("flattened_labels", flattened_labels.shape)
-
-        # TODO: Currently acting as oracle
-        # Secondly, issue with the eval script
-
-        loss = t.sum(criterion(flattened_logits, flattened_labels))
-
-        print("loss", loss)
+        # print("loss", loss)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -94,16 +75,16 @@ def main():
 
     training_args = TrainingArguments(
         output_dir="checkpoints",
-        num_train_epochs=10,
+        num_train_epochs=1000,
         per_device_train_batch_size=8,
-        # per_device_eval_batch_size=8,
-        warmup_steps=500,
+        per_device_eval_batch_size=8,
+        # warmup_steps=500,
         weight_decay=0.01,
-        logging_steps=10,
+        logging_steps=50,
         evaluation_strategy="steps",
         load_best_model_at_end=True,
         save_total_limit=1,
-        save_steps=10,
+        # save_steps=10,
         # eval_steps=10,
         no_cuda=False,
         seed=42,
@@ -122,7 +103,7 @@ def main():
 
     trainer.train()
 
-    print(trainer.state)
+    # print(trainer.state)
 
 
 if __name__ == "__main__":
