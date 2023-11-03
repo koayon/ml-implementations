@@ -63,7 +63,9 @@ class SharedParamsMoEModel(nn.Module):
         # self.router_weights_passed_separately = share_routers
 
         if share_attention_layers:
-            single_attention_layer = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
+            single_attention_layer = AlibiUnidirectionalAttention(
+                hidden_size=config.hidden_size, num_heads=config.num_attn_heads
+            )
             attn_layers = OrderedDict(
                 {
                     f"attn_layer_{i}": single_attention_layer
@@ -72,11 +74,17 @@ class SharedParamsMoEModel(nn.Module):
             )
         else:
             for i in range(self.config.num_total_layers):
-                attn_layers[f"attn_layer_{i}"] = AlibiUnidirectionalAttention(hidden_size=config.hidden_size, num_heads=config.num_attn_heads)
+                attn_layers[f"attn_layer_{i}"] = AlibiUnidirectionalAttention(
+                    hidden_size=config.hidden_size, num_heads=config.num_attn_heads
+                )
 
         if share_expert_layers:
-            single_moe_layer = GroupExpertLayer(num_experts = num_experts, layer_id = f"moe_layer",  ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
-                                             )
+            single_moe_layer = GroupExpertLayer(
+                num_experts=num_experts,
+                layer_id=f"moe_layer",
+                ffn_dim_multiplier=ffn_dim_multiplier,
+                group_size=group_size,
+            )
             moe_layers = OrderedDict(
                 {
                     f"moe_layer_{i}": single_moe_layer
@@ -86,11 +94,17 @@ class SharedParamsMoEModel(nn.Module):
 
         else:
             for i in range(self.config.num_total_layers):
-                moe_layers[f"moe_layer_{i}"] = GroupExpertLayer(num_experts = num_experts, layer_id = f"moe_layer_{i}", ffn_dim_multiplier = ffn_dim_multiplier, group_size = group_size
-                                             )
+                moe_layers[f"moe_layer_{i}"] = GroupExpertLayer(
+                    num_experts=num_experts,
+                    layer_id=f"moe_layer_{i}",
+                    ffn_dim_multiplier=ffn_dim_multiplier,
+                    group_size=group_size,
+                )
 
         if share_routers:
-            single_router = Router(num_experts = num_experts, router_str="linear", config = config)
+            single_router = Router(
+                num_experts=num_experts, router_str="linear", config=config
+            )
             routers = OrderedDict(
                 {
                     f"router_{i}": single_router
@@ -100,7 +114,9 @@ class SharedParamsMoEModel(nn.Module):
         else:
             routers = OrderedDict(
                 {
-                    f"router_{i}": Router(num_experts = num_experts, router_str="linear", config = config)
+                    f"router_{i}": Router(
+                        num_experts=num_experts, router_str="linear", config=config
+                    )
                     for i in range(self.config.num_total_layers)
                 }
             )
@@ -120,7 +136,9 @@ class SharedParamsMoEModel(nn.Module):
 
     def unembed(self, z: Float[t.Tensor, "batch seq hidden"]) -> t.Tensor:
         out = einsum(
-            z, self.token_embedding.weight, "b s h, v h -> b s v",
+            z,
+            self.token_embedding.weight,
+            "b s h, v h -> b s v",
         )  # batch seq vocab_size
         return out
 
@@ -132,11 +150,11 @@ class SharedParamsMoEModel(nn.Module):
         batch_size, seq_len = input_ids.shape
 
         # Get token embeddings. Note since we're using ALiBI there are no positional embeddings here
-        x = self.token_embedding(input_ids) # batch seq hidden
+        x = self.token_embedding(input_ids)  # batch seq hidden
 
         for idx, layer in self.sequential_layers.named_children():
             if idx.startswith("attn_layer"):
-                x, _attention_cache = layer(x) # batch seq hidden
+                x, _attention_cache = layer(x)  # batch seq hidden
             else:
                 # MoE layers
 
@@ -148,14 +166,16 @@ class SharedParamsMoEModel(nn.Module):
                 router.to(device)
 
                 # Get the router weights
-                h = router(x) # (bs) num_experts
+                h, _ = router(x)  # (bs) num_experts
 
                 # Pass the router weights to the MoE layer with x
-                x, _cache = layer(x = x, routing_logits = h, batch_size = batch_size, seq_len = seq_len) # (batch seq) hidden
+                x, _cache = layer(
+                    x=x, routing_logits=h, batch_size=batch_size, seq_len=seq_len
+                )  # (batch seq) hidden
 
-                x = rearrange(x, "(b s) h -> b s h", b = batch_size, s = seq_len)
+                x = rearrange(x, "(b s) h -> b s h", b=batch_size, s=seq_len)
 
-        z = self.final_norm(x) # batch seq hidden
+        z = self.final_norm(x)  # batch seq hidden
 
         # Unembed to get logits for each token
         out = self.unembed(z)  # batch seq vocab_size
