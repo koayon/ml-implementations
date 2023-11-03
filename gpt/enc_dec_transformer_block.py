@@ -4,14 +4,12 @@ from typing import Any, List, Optional, Tuple, Union
 import torch as t
 import torch.nn as nn
 import torch.optim as optim
-import transformers
 from einops import rearrange, repeat
 from transformers.activations import NewGELUActivation
 
 from gpt.cached_attention import AttentionCache, UnidirectionalAttention
 from gpt.cross_attention import CrossAttentionLayer
-from gpt.group_query_attention import GroupedQueryAttention
-from helpers import einsum
+from gpt.transformer_block import GPT2Block
 
 ACTIVATION_FUNCTIONS = dict(
     relu=nn.ReLU(),
@@ -40,7 +38,7 @@ class EncDecTransformerBlock(nn.Module):
         num_heads: int = 12,
         dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
-        activation_function: str = "new_gelu",
+        activation_function: str = "gelu",
     ):
         super().__init__()
 
@@ -104,29 +102,52 @@ class EncDecTransformerBlock(nn.Module):
         return x, layer_cache
 
 
-def train(batch_size=1000, num_epochs=1000, seq_len=2, hidden_size=16, num_heads=2):
-    model = EncDecTransformerBlock(
+def train(batch_size=1_000, num_epochs=1_000, seq_len=2, hidden_size=2, num_heads=1):
+    enc_dec_block = EncDecTransformerBlock(
         layer_index=0, hidden_size=hidden_size, num_heads=num_heads
     )
-    encoder_output = t.rand(batch_size, seq_len, hidden_size)
-    signal = repeat(
-        t.rand(1, seq_len, hidden_size),
-        "1 seq hidden_dim -> batch seq hidden_dim",
-        batch=batch_size,
+    gpt_block = GPT2Block(layer_index=0, hidden_size=hidden_size, num_heads=num_heads)
+    encoder_output = (
+        repeat(t.tensor([[1, 3], [-0.3, 0.6]]), "s h -> b s h", b=batch_size)
+        # + t.randn(batch_size, seq_len, hidden_size) * 0.2
     )
-    noise = t.randn(batch_size, seq_len, hidden_size) / 10
-    x = signal + noise
+    decoder_input = encoder_output = (
+        repeat(t.tensor([[-4, 1], [-0.8, 0.1]]), "s h -> b s h", b=batch_size)
+        # + t.randn(batch_size, seq_len, hidden_size) * 0.2
+    )
 
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
+    # signal_from_encoder = encoder_output * 2 + 5
+    signal_from_encoder = 0
+    # seq_signal = repeat(t.arange(seq_len), "s -> b s h", b=batch_size,
+    # h=hidden_size)
+    seq_signal = 0
+    signal_from_input = decoder_input * 5.3
+    # signal_from_input = 0
+    # noise = t.randn(batch_size, seq_len, hidden_size)
+    noise = 0
 
-    # Trying to reconstruct the signal
-    for epoch in range(num_epochs):
-        optimizer.zero_grad()
-        y, _ = model(x, encoder_output)
-        loss = t.sum((y - signal) ** 2)
-        loss.backward()
-        optimizer.step()
-        print(f"Epoch {epoch}, {loss/batch_size}")
+    preds = signal_from_encoder + seq_signal + signal_from_input + noise
+
+    for model in [enc_dec_block, gpt_block]:
+        print("-------------------")
+        print("model", model)
+
+        optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+        # Trying to reconstruct the signal
+        for epoch in range(num_epochs):
+            optimizer.zero_grad()
+            if model == enc_dec_block:
+                y, _ = model(decoder_input, encoder_output)
+            else:
+                y, _ = model(decoder_input)
+            loss = t.sum((y - preds) ** 2)
+            loss.backward()
+            optimizer.step()
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch}, {loss/batch_size}")
+
+            # print the l2 loss of the weights
 
 
 if __name__ == "__main__":

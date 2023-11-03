@@ -8,12 +8,12 @@ class ArithmeticConfig:
     # Model
     # tokenizer_string: str = "gpt2"
     activation_function: str = "gelu"
-    num_layers: int = 2
+    num_layers: int = 3
     num_attn_heads: int = 8
 
-    hidden_size: int = 128
+    hidden_size: int = 64
     # vocab_size: int = 50257
-    max_position_embeddings: int = 128
+    max_position_embeddings: int = 32
 
     dropout: float = 0.1
 
@@ -26,7 +26,6 @@ class ArithmeticConfig:
 
     batch_size: int = 64
     # train_test_split: float = 0.99
-    block_size: int = 64
 
     def __str__(self) -> str:
         out = "ArithemticConfig:\n\n"

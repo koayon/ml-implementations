@@ -17,18 +17,21 @@ def num_digits_proxy_hardness(num: int) -> int:
     return math.ceil(math.log(num, 10)) if num > 0 else 1
 
 
-def make_input_output_pairs(n: int = 10) -> tuple[list[str], list[str], list[int]]:
+def make_input_output_pairs(
+    num_examples: int = 10,
+) -> tuple[list[str], list[str], list[int]]:
     """Generate n arithmetic input-output pairs"""
     input_strs = []
     output_strs = []
     num_idk_tokens = []
-    for _ in range(n):
+    for _ in range(num_examples):
         a = random.randint(0, 100)
         b = random.randint(0, 100)
         c = a + b
 
-        # Calcuate a proxy for hardness of the problem. Here we're using the number of digits in the sum
+        # Calculate a proxy for hardness of the problem. Here we're using the number of digits in the sum
         proxy_hardness = num_digits_proxy_hardness(a) + num_digits_proxy_hardness(b)
+        # proxy_hardness = 0
 
         input_strs.append(f"{a}+{b}=")
         output_strs.append(str(c))
@@ -56,8 +59,8 @@ class CustomDataset(Dataset):
         }
 
 
-def get_dataset() -> Dataset:
-    input_strs, output_strs, num_idk_tokens = make_input_output_pairs(10)
+def get_dataset(num_examples: int = 10) -> Dataset:
+    input_strs, output_strs, num_idk_tokens = make_input_output_pairs(num_examples)
     # print(input_strs)
     # print(output_strs)
 

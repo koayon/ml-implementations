@@ -37,7 +37,7 @@ class GPT2Block(nn.Module):
         num_heads: int = 12,
         dropout: float = 0.1,
         layer_norm_epsilon: float = 1e-5,
-        activation_function: str = "new_gelu",
+        activation_function: str = "gelu",
         group_size: int = 0,
         autoregressive: bool = True,
     ):

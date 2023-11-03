@@ -68,8 +68,8 @@ class CustomTrainer(Trainer):
                 penalty += self.idk_penalty
 
 
-def main(num_train_epochs=10_000):
-    dataset = get_dataset()
+def main(num_train_epochs=2_000, num_examples=1000):
+    dataset = get_dataset(num_examples=num_examples)
     print(dataset)
 
     model = ArithmeticNet(training=True)
@@ -77,14 +77,14 @@ def main(num_train_epochs=10_000):
     training_args = TrainingArguments(
         output_dir="checkpoints",
         num_train_epochs=num_train_epochs,
-        per_device_train_batch_size=10,
-        per_device_eval_batch_size=10,
+        per_device_train_batch_size=num_examples,
+        per_device_eval_batch_size=num_examples,
         learning_rate=1e-3,
         warmup_steps=50,
         weight_decay=0.01,
         logging_steps=num_train_epochs // 100,
         evaluation_strategy="steps",
-        load_best_model_at_end=True,
+        # load_best_model_at_end=True,
         save_total_limit=1,
         # save_steps=10,
         eval_steps=num_train_epochs // 10,
@@ -109,11 +109,14 @@ def main(num_train_epochs=10_000):
     predict_outputs = trainer.predict(dataset)
 
     logits: np.ndarray = predict_outputs.predictions  # type: ignore # [batch, seq, vocab_size]
+    print(logits.shape)
+    print(logits)
     preds = np.argmax(logits, axis=-1)
     print("preds", preds)
     print("true labels", predict_outputs.label_ids[:, 1:])  # type: ignore
 
     # print(trainer.state)
+    # TODO: Memorises 1 data point but has trouble with 10?
 
 
 if __name__ == "__main__":
