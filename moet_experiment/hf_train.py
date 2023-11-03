@@ -181,7 +181,7 @@ def get_trainer(
         #     exact_match = exact_match_dict["exact_match"]
         # except:
         #     exact_match = None
-        # return {"perxplexity": perplexity, "exact_match": exact_match}
+        # return {"perplexity": perplexity, "exact_match": exact_match}
         return {"perplexity": perplexity}
 
     trainer = Trainer(

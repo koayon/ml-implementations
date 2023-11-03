@@ -30,18 +30,29 @@ def load_balancing_aux_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tenso
     num_experts = moe_cache.num_experts
     num_tokens = moe_cache.num_tokens
 
-    total_tokens_per_expert = reduce(moe_cache.P, "layer expert batch_seq k -> layer expert", "sum")  # [layer, expert]
+    total_tokens_per_expert = reduce(
+        moe_cache.P, "layer expert batch_seq k -> layer expert", "sum"
+    )  # [layer, expert]
     frac_tokens_per_expert = total_tokens_per_expert / num_tokens
 
-    routing_probs = F.softmax(moe_cache.routing_logits_tensor, dim=-1)  # [layer, num_experts, batch_seq]
+    routing_probs = F.softmax(
+        moe_cache.routing_logits_tensor, dim=-1
+    )  # [layer, num_experts, batch_seq]
 
-    total_router_prob_per_expert = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
+    total_router_prob_per_expert = reduce(
+        routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum"
+    )  # [layer, num_experts]
     frac_router_prob_per_expert = total_router_prob_per_expert / num_tokens
 
     # Dot product
-    lb_loss = num_experts * einsum(frac_tokens_per_expert, frac_router_prob_per_expert, "layer expert, layer expert ->")
+    lb_loss = num_experts * einsum(
+        frac_tokens_per_expert,
+        frac_router_prob_per_expert,
+        "layer expert, layer expert ->",
+    )
 
     return lb_loss
+
 
 def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Router z loss.
@@ -60,14 +71,15 @@ def router_z_loss_function(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     t.Tensor
         Router z loss
     """
-    router_logits = moe_cache.routing_logits_tensor # [layer, num_experts, batch_seq]
+    router_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
 
     lse_logits = t.logsumexp(router_logits, dim=-1)  # [layer, num_experts]
-    squared_lse_logits = lse_logits ** 2
+    squared_lse_logits = lse_logits**2
 
     z_loss = einsum(squared_lse_logits, "layer num_experts ->") / (moe_cache.num_tokens)
 
     return z_loss
+
 
 def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Load balancing auxiliary loss for Experts based on balancing expert importance.
@@ -88,8 +100,12 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
     routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
 
-    expert_importance = reduce(routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum")  # [layer, num_experts]
-    flat_expert_importance = rearrange(expert_importance, "layer num_experts -> (layer num_experts)")
+    expert_importance = reduce(
+        routing_probs, "layer num_experts batch_seq -> layer num_experts", "sum"
+    )  # [layer, num_experts]
+    flat_expert_importance = rearrange(
+        expert_importance, "layer num_experts -> (layer num_experts)"
+    )
 
     std_expert_importance = t.std(flat_expert_importance)
     mean_expert_importance = t.mean(flat_expert_importance)
@@ -97,6 +113,7 @@ def expert_importance_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     expert_importance_loss = (std_expert_importance / mean_expert_importance) ** 2
 
     return expert_importance_loss
+
 
 def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Expert load balancing loss introduced in the LIMOE paper. Used in combination with the global entropy loss.
@@ -117,10 +134,14 @@ def local_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """
     routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
     routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
-    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+    flat_routing_probs = rearrange(
+        routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq"
+    )  # layer_expert, batch_seq
 
     # Calculate the entropy, denoted h in the paper
-    local_entropy = - t.sum(flat_routing_probs * t.log(flat_routing_probs), dim=0)  # [batch_seq]
+    local_entropy = -t.sum(
+        flat_routing_probs * t.log(flat_routing_probs), dim=0
+    )  # [batch_seq]
 
     local_entropy_loss = t.mean(local_entropy)
 
@@ -149,14 +170,19 @@ def global_entropy_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """
     routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
     routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
-    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+    flat_routing_probs = rearrange(
+        routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq"
+    )  # layer_expert, batch_seq
 
     global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]
 
     # Calculate the entropy, denoted h in the paper
-    global_entropy_loss = - t.sum(global_routing_probs * t.log(global_routing_probs), dim=0)
+    global_entropy_loss = -t.sum(
+        global_routing_probs * t.log(global_routing_probs), dim=0
+    )
 
     return global_entropy_loss
+
 
 def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """Auxiliary loss for MoE networks which pushes the global routing probabilities towards a uniform distribution.
@@ -174,25 +200,28 @@ def uniform_kl_loss(moe_cache: TokenChoiceFullCache) -> t.Tensor:
     """
     routing_logits = moe_cache.routing_logits_tensor  # [layer, num_experts, batch_seq]
     routing_probs = F.softmax(routing_logits, dim=2)  # [layer, num_experts, batch_seq]
-    flat_routing_probs = rearrange(routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq") # layer_expert, batch_seq
+    flat_routing_probs = rearrange(
+        routing_probs, "layer num_experts batch_seq -> (layer num_experts) batch_seq"
+    )  # layer_expert, batch_seq
 
     global_routing_probs = t.mean(flat_routing_probs, dim=1)  # [layer_expert]
 
     # Calculate the KL divergence between the global routing probabilities and a uniform distribution
-    kl_div = F.kl_div(global_routing_probs, t.ones_like(global_routing_probs) / global_routing_probs.shape[0])
+    kl_div = F.kl_div(
+        global_routing_probs,
+        t.ones_like(global_routing_probs) / global_routing_probs.shape[0],
+    )
 
     return kl_div
 
 
 class MoETHFConfig(PretrainedConfig):
-
     def __init__(
         self,
         block_type="MoE",
         layers: int = 8,
         **kwargs,
     ):
-
         self.block_type = block_type
         self.layers = layers
         super().__init__(**kwargs)
@@ -209,7 +238,13 @@ class MoET_hf(PreTrainedModel):
         self.lb_coef = self.model.config.lb_coef
         self.z_coef = self.model.config.z_coef
 
-    def forward(self, input_ids: t.Tensor, attention_mask: t.Tensor, return_dict: bool = True, **kwargs) -> dict["str", t.Tensor]:
+    def forward(
+        self,
+        input_ids: t.Tensor,
+        attention_mask: t.Tensor,
+        return_dict: bool = True,
+        **kwargs,
+    ) -> dict["str", t.Tensor]:
         """Forward function for hf wrapped model.
 
         Parameters
@@ -245,13 +280,20 @@ class MoET_hf(PreTrainedModel):
             router_z_loss = router_z_loss_function(moe_cache)
 
             # Combine losses
-            loss = cross_entropy_loss + self.lb_coef * load_balancing_aux_loss + self.z_coef * router_z_loss
+            loss = (
+                cross_entropy_loss
+                + self.lb_coef * load_balancing_aux_loss
+                + self.z_coef * router_z_loss
+            )
 
-            return {"loss": loss, "cross_entropy_loss": cross_entropy_loss,
-                    "load_balancing_aux_loss": load_balancing_aux_loss,
-                    "router_z_loss": router_z_loss,
-                    "labels": labels,
-                    "logits": logits,}
+            return {
+                "loss": loss,
+                "cross_entropy_loss": cross_entropy_loss,
+                "load_balancing_aux_loss": load_balancing_aux_loss,
+                "router_z_loss": router_z_loss,
+                "labels": labels,
+                "logits": logits,
+            }
         else:
             # return {"logits": logits}
             raise NotImplementedError("return_dict=False not implemented yet")
