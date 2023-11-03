@@ -15,13 +15,21 @@ from one_wide_moe.one_wide_config import OneWideConfig
 
 config = MoEConfig()
 
+
 class RouterEnums(Enum):
     linear = auto()
     learned = auto()
     hash = auto()
 
+
 class Router(nn.Module):
-    def __init__(self, *, num_experts: int, router_str: str, config: Union[MoETConfig, OneWideConfig]):
+    def __init__(
+        self,
+        *,
+        num_experts: int,
+        router_str: str,
+        config: Union[MoETConfig, OneWideConfig],
+    ):
         super().__init__()
         self.config = config
 
@@ -38,15 +46,19 @@ class Router(nn.Module):
             # Build the hash router
             assert config.num_experts_hash == self.num_experts
             self.hash_router = HashRouter(
-                config=config, num_experts=config.num_experts_hash)
+                config=config, num_experts=config.num_experts_hash
+            )
             # self.hash_router.build_random_hash()
         else:
             raise ValueError(
-                f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}")
+                f"Unknown router {router_str}. Please choose from {RouterEnums._member_names_}"
+            )
 
         self.routing_dropout = nn.Dropout(config.routing_dropout)
 
-    def forward(self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None) -> t.Tensor:
+    def forward(
+        self, x: t.Tensor, input_tokens: Optional[t.IntTensor] = None
+    ) -> tuple[t.Tensor, t.Tensor]:
         """
         Parameters:
         x (t.Tensor): Hidden state input tensor. Shape (bs, hidden_size).
@@ -58,6 +70,7 @@ class Router(nn.Module):
         Raises:
         AssertionError: If router_str is "hash" and input_tokens is None.
         """
+        clean_h: t.Tensor
 
         if self.router_enum == RouterEnums["hash"]:
             assert input_tokens is not None
@@ -65,7 +78,7 @@ class Router(nn.Module):
             input_tokens = rearrange(input_tokens, "b s -> (b s)")
             clean_h = self.hash_router(input_tokens).float()  # bs num_experts
 
-            return clean_h # bs num_experts
+            return clean_h, clean_h  # bs num_experts
         else:
             clean_h = self.linear(x)  # bs num_experts
             clean_h = self.routing_dropout(clean_h)  # bs num_experts
@@ -75,9 +88,10 @@ class Router(nn.Module):
             if self.training:
                 gumbel_noise = -t.log(-t.log(t.rand_like(clean_h) + 1e-10) + 1e-10)
                 h = (clean_h + gumbel_noise) / self.router_temperature
-                return h  # bs num_experts
+                return h, clean_h  # bs num_experts
 
-            return clean_h  # bs num_experts
+            return clean_h, clean_h  # bs num_experts
+
 
 class HashRouter(nn.Module):
     """Router for the MoE layer that uses a hash function to assign tokens to experts.
@@ -103,8 +117,7 @@ class HashRouter(nn.Module):
     def forward(self, input: Int[t.Tensor, "bs"]) -> Int[t.Tensor, "bs k"]:
         "Takes in token ids and a hashing function and returns the expert num that each token should be assigned to."
 
-        hashes = [self.hash[:, i][input]
-                  for i in range(self.k)]  # k list of bs
+        hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of bs
 
         top_k = t.stack(hashes, dim=-1)  # bs, k
         top_k_one_hot = one_hot(
@@ -126,8 +139,9 @@ class HashRouter(nn.Module):
         self.generator.manual_seed(seed)
 
         hash = t.randint(
-            high=self.num_experts, size=(
-                self.vocab_size, self.k), generator=self.generator
+            high=self.num_experts,
+            size=(self.vocab_size, self.k),
+            generator=self.generator
             # , device = device
         )
         return hash
