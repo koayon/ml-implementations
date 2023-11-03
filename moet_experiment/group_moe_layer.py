@@ -108,6 +108,7 @@ class GroupMoELayer(nn.Module):
         ffn_dim_multiplier: int = 4,
         ffn_ratio: float = 2 / 3,
         use_expert_choice: Optional[bool] = None,
+        use_sparse_backprop_mixer: bool = False,
     ) -> None:
         super().__init__()
 
@@ -138,6 +139,15 @@ class GroupMoELayer(nn.Module):
                 router_str=router_str,
                 config=config,
             )
+        if use_sparse_backprop_mixer:
+            # Register a forward hook to collect the additional tensors we need
+            # for sparse backprop
+
+            ...
+            # Register backward hook to do the sparse backprop, adding on either
+            # grad_1st_order or grad_midpoint depending on whether we picked the
+            # top expert or not
+            ...
 
         self.expert_layer = GroupExpertLayer(
             num_experts=num_experts,
@@ -179,7 +189,9 @@ class GroupMoELayer(nn.Module):
         """
         batch_size, seq_len, _hidden_size = x.shape
         x = rearrange(x, "b s h -> (b s) h")
-        routing_logits = self.router(x, input_tokens)  # (b s) num_experts
+        routing_logits, uncorrupted_routing_logits = self.router(
+            x, input_tokens
+        )  # (b s) num_experts
 
         y, layer_cache = self.expert_layer(
             x=x, routing_logits=routing_logits, batch_size=batch_size, seq_len=seq_len
