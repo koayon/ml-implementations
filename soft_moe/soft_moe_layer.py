@@ -14,18 +14,21 @@ from soft_moe.soft_expert_layer import SoftExpertLayer
 
 
 class SoftMoERouter(Router):
-    def __init__(self, *, num_experts: int, router_str: str, config: MoETConfig):
-        super().__init__(num_experts=num_experts, router_str=router_str, config=config)
+    def __init__(self, *, num_experts: int, config: MoETConfig):
+        super().__init__(num_experts=num_experts, router_str="linear", config=config)
         self.l2_norm_0 = L2LayerNorm(dim=0)
         self.l2_norm_1 = L2LayerNorm(dim=2)
         self.scale = nn.Parameter(t.ones(1))
 
         self.linear.weight.data = self.l2_norm_0(self.linear.weight)
         self.linear.weight.data *= self.scale
+        # TODO: How often to do this scaling and norming?
 
-    def forward(self, x: t.Tensor):
+    def forward(self, x: t.Tensor) -> tuple[t.Tensor, t.Tensor]:
         x = self.l2_norm_1(x)
-        super().forward(x)
+        # Forward the router
+        router_logits, uncorrupted_router_logits = super()(x)
+        return router_logits, uncorrupted_router_logits
 
 
 class SoftMoELayer(nn.Module):
@@ -42,7 +45,6 @@ class SoftMoELayer(nn.Module):
     ):
         self.router = SoftMoERouter(
             num_experts=num_experts * slots_per_expert,
-            router_str="linear",
             config=config,
         )
         self.soft_expert_layer = SoftExpertLayer(
