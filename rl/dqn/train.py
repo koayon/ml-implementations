@@ -123,18 +123,28 @@ def log(
 
 def train_dqn(args: DQNArgs):
     (run_name, rng, device, envs) = setup(args)
+    print("Set-up complete. Running experiment: ", run_name)
+
     # Initialise the q-network, optimizer, and replay buffer
+    dim_observation = envs.single_observation_space.shape[0]
+    num_total_possible_actions = envs.single_action_space.n
+
     q_network = QNetwork(
-        dim_observation=envs.single_observation_space.shape[0],
-        num_actions=envs.single_action_space.n,
+        dim_observation=dim_observation,
+        num_actions=num_total_possible_actions,
+    ).to(device)
+
+    q_target_network = QNetwork(
+        dim_observation=dim_observation,
+        num_actions=num_total_possible_actions,
     ).to(device)
 
     optimizer = t.optim.Adam(q_network.parameters(), lr=args.learning_rate)
 
     rb = ReplayBuffer(
         buffer_size=args.buffer_size,
-        num_actions=envs.single_action_space.n,
-        observation_shape=envs.single_observation_space.shape,
+        num_actions=num_total_possible_actions,
+        observation_shape=(dim_observation,),
         num_environments=envs.num_envs,
         seed=args.seed,
     )
@@ -168,10 +178,13 @@ def train_dqn(args: DQNArgs):
         rb.add(obs, actions, rewards, dones, next_obs)
 
         obs = next_obs
+
         if step > args.learning_starts and step % args.train_frequency == 0:
             # Sample from the replay buffer, compute the TD target, compute TD
             # loss, and perform an optimizer step.
-            replay_buffer_samples = rb.sample(sample_size=100, device=device)
+            replay_buffer_samples = rb.sample(
+                sample_size=args.batch_size, device=device
+            )
             sampled_observations = (
                 replay_buffer_samples.observations
             )  # [num_environments, num_samples, observations_shape]
@@ -179,9 +192,38 @@ def train_dqn(args: DQNArgs):
             predicted_q_values_for_actions = q_network(
                 sampled_observations
             )  # [num_environments, num_samples, num_actions]
-            ...
 
-            log(start_time, step, predicted_q_vals, loss, infos, epsilon)
+            # Get targets and loss function
+            next_observations = replay_buffer_samples.next_observations
+            rewards = replay_buffer_samples.rewards
+
+            with t.no_grad():
+                predicted_q_values_after_next_move = q_target_network(
+                    next_observations
+                )  # [num_environments, num_samples, num_actions]
+                max_q_val_after_next_move = t.max(
+                    predicted_q_values_after_next_move, dim=-1
+                )  # [num_environments, num_samples]
+
+            # Target is r + gamma * max_a' Q(s', a') for non-terminal
+            # transitions. If done at that step then there are no future
+            # rewards.
+            target_q_values = rewards + (
+                args.gamma * t.max(max_q_val_after_next_move)
+            ) * (1 - replay_buffer_samples.dones)
+
+            # Compute TD-loss normalised by the batch size
+            loss: t.Tensor = t.norm(
+                target_q_values - predicted_q_values_for_actions
+            ) / (t.prod(t.tensor(target_q_values.shape)))
+            loss.backward()
+            optimizer.step()
+
+            log(start_time, step, predicted_q_values_for_actions, loss, infos, epsilon)
+
+        # Update the target network
+        if step % args.target_network_frequency == 0:
+            q_target_network.load_state_dict(q_network.state_dict())
 
     "If running one of the Probe environments, will test if the learned q-values are sensible after training. Useful for debugging."
     if args.env_id == "Probe1-v0":
