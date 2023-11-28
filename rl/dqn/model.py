@@ -1,29 +1,7 @@
-import argparse
 import os
-import random
-import sys
-import time
-from dataclasses import dataclass
-from distutils.util import strtobool
-from typing import Any, Iterable, List, Optional, Tuple, Union
 
-import gym
-import gym.envs.registration
-import numpy as np
-import pandas as pd
-import torch
 import torch as t
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from einops import rearrange
-from gym.spaces import Box, Discrete
-from matplotlib import pyplot as plt
-from numpy.random import Generator
-from rl_utils import make_env
-from torch.utils.tensorboard import SummaryWriter
-
-os.environ["SDL_VIDEODRIVER"] = "dummy"
 
 
 class QNetwork(nn.Module):
