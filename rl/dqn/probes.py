@@ -1,16 +1,45 @@
+from dataclasses import dataclass
 from typing import Optional, Union
 
 import gym
 import gym.envs.registration
 import numpy as np
+import torch as t
 from gym.spaces import Box, Discrete
+
+from rl.dqn.args import DQNArgs
 
 ObsType = np.ndarray
 ActType = int
 
+args = DQNArgs()
+
+
+@dataclass
+class ProbeEnvConfig:
+    batch: t.Tensor
+    expected: t.Tensor
+
 
 def register_probe_environments():
     gym.envs.registration.register(id="Probe1-v0", entry_point=Probe1)
+
+
+PROBE_ENV_CONFIGS = {
+    "Probe1-v0": ProbeEnvConfig(batch=t.tensor([[0.0]]), expected=t.tensor([[1.0]])),
+    "Probe2-v0": ProbeEnvConfig(
+        batch=t.tensor([[-1.0], [+1.0]]), expected=t.tensor([[-1.0], [+1.0]])
+    ),
+    "Probe3-v0": ProbeEnvConfig(
+        batch=t.tensor([[0.0], [1.0]]), expected=t.tensor([[args.gamma], [1.0]])
+    ),
+    "Probe4-v0": ProbeEnvConfig(
+        batch=t.tensor([[0.0]]), expected=t.tensor([[-1.0, 1.0]])
+    ),
+    "Probe5-v0": ProbeEnvConfig(
+        batch=t.tensor([[0.0], [1.0]]), expected=t.tensor([[1.0, -1.0], [-1.0, 1.0]])
+    ),
+}
 
 
 class Probe1(gym.Env):
@@ -30,6 +59,7 @@ class Probe1(gym.Env):
         self.reset()
 
     def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
+        # Observation, reward, done, info
         return (np.array([0]), 1.0, True, {})
 
     def reset(
