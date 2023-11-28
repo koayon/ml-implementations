@@ -4,5 +4,6 @@
   "python.testing.pytestEnabled": true,
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter"
-  }
+  },
+  "cSpell.words": ["dones"]
 }
