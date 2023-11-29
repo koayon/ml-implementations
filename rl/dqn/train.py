@@ -10,6 +10,7 @@ import torch.backends.cudnn
 from gym.spaces import Box, Discrete
 from numpy.random import Generator
 
+import wandb
 from helpers import allclose, allclose_atol
 from rl.dqn.args import DQNArgs
 from rl.dqn.buffer import ReplayBuffer
@@ -29,7 +30,7 @@ def linear_schedule(
     Epsilon should be start_e at step 0 and decrease linearly to end_e at step (exploration_fraction * total_timesteps).
     """
     proportion_done = current_step / (total_timesteps * exploration_fraction)
-    return start_e - proportion_done * (start_e - end_e)
+    return max(start_e - proportion_done * (start_e - end_e), end_e)
 
 
 def epsilon_greedy_policy(
@@ -101,31 +102,49 @@ def setup(
 
 
 def log(
-    start_time: float,
     step: int,
     predicted_q_vals: t.Tensor,
-    loss: Union[float, t.Tensor],
+    loss: t.Tensor,
     infos: Iterable[dict],
     epsilon: float,
+    print_to_console: bool = True,
 ):
-    """Helper function to write relevant info to logs, and print some things to stdout"""
-    if step % 100 == 0:
-        print("losses/td_loss", loss, step)
-        print("losses/q_values", t.mean(predicted_q_vals, dim=0), step)
-        # print("charts/SPS", int(step / (time.time() - start_time)), step)
-        # if step % 1000 == 0:
-        # print("SPS:", int(step / (time.time() - start_time)))
+    """Helper function to write relevant info to wandb, and print some things to stdout"""
+    if step % 10 == 0:
+        # Prepare data for logging
+        log_data = {
+            "losses/td_loss": loss.item() if isinstance(loss, t.Tensor) else loss,
+            "losses/q_values": t.mean(predicted_q_vals, dim=0).tolist(),
+        }
+
+        # Log data to wandb
+        wandb.log(log_data, step=step)
+
+    if (step % 1000 == 0) and print_to_console:
+        print(f"Step: {step} | loss: {loss.item():2f}")
 
     for info in infos:
         if "episode" in info.keys():
-            # print(f"global_step={step}, episodic_return={info['episode']['r']}")
-            # print("charts/episodic_return", info["episode"]["r"], step)
-            # print("charts/episodic_length", info["episode"]["l"], step)
-            # print("charts/epsilon", epsilon, step)
+            episode_reward = info["episode"]["r"]
+            episode_length = info["episode"]["l"]
+
+            episodic_data = {
+                "charts/episodic_return": episode_reward,
+                "charts/episodic_length": episode_length,
+                "charts/epsilon": epsilon,
+            }
+
+            # Log episodic data to wandb
+            wandb.log(episodic_data, step=step)
+
+            if (step % 1000 == 0) and print_to_console:
+                print(
+                    f"Step: {step} | epsilon: {epsilon:2f} | episode reward: {episode_reward}",
+                )
             break
 
 
-def train_dqn(args: DQNArgs):
+def train_dqn(args: DQNArgs, log_to_wandb: bool = True):
     (run_name, rng, device, envs) = setup(args)
     print("Set-up complete. Running experiment: ", run_name)
 
@@ -137,6 +156,7 @@ def train_dqn(args: DQNArgs):
         dim_observation=dim_observation,
         hidden_sizes=args.hidden_sizes,
         num_actions=num_total_possible_actions,
+        dropout=args.dropout,
     ).to(device)
 
     # Initialise the target network to be the same as the q-network
@@ -177,6 +197,10 @@ def train_dqn(args: DQNArgs):
             exploration_fraction=args.exploration_fraction,
             total_timesteps=args.total_timesteps,
         )
+        # if step % 1000:
+        #     print(f"Step: {step}, epsilon: {epsilon}")
+        # if epsilon < 0:
+        #     raise ValueError("Epsilon < 0")
         actions = epsilon_greedy_policy(
             envs, q_network=q_network, rng=rng, obs=t.tensor(obs), epsilon=epsilon
         )
@@ -252,14 +276,14 @@ def train_dqn(args: DQNArgs):
             loss.backward()
             optimizer.step()
 
-            log(
-                start_time,
-                step,
-                predicted_q_values_for_all_actions,
-                loss,
-                infos,
-                epsilon,
-            )
+            if log_to_wandb:
+                log(
+                    step=step,
+                    predicted_q_vals=predicted_q_values_for_all_actions,
+                    loss=loss,
+                    infos=infos,
+                    epsilon=epsilon,
+                )
 
         # Update the target network
         if step % args.target_network_frequency == 0:
@@ -285,9 +309,17 @@ if __name__ == "__main__":
 
     register_probe_environments()
 
-    args.env_id = "Probe4-v0"
+    args.env_id = "Probe5-v0"
     args.hidden_sizes = [20, 10]
-    args.end_e = 0.3
-    # args.total_timesteps = 100000
-
-    q_network = train_dqn(args)
+    # args.weight_decay = 0
+    log_to_wandb = True
+    # args.total_timesteps = 5000
+    if log_to_wandb:
+        wandb.init()
+    try:
+        q_network = train_dqn(args, log_to_wandb=log_to_wandb)
+    except AssertionError as e:
+        print("Not close enough to expected values:")
+        print(e)
+    if log_to_wandb:
+        wandb.finish()
