@@ -24,7 +24,7 @@ class ProbeEnvConfig:
 def register_probe_environments():
     gym.envs.registration.register(id="Probe1-v0", entry_point=Probe1)
     gym.envs.registration.register(id="Probe2-v0", entry_point=Probe2)
-    # gym.envs.registration.register(id="Probe3-v0", entry_point=Probe3)
+    gym.envs.registration.register(id="Probe3-v0", entry_point=Probe3)
     # gym.envs.registration.register(id="Probe4-v0", entry_point=Probe4)
     # gym.envs.registration.register(id="Probe5-v0", entry_point=Probe5)
 
@@ -115,6 +115,55 @@ class Probe2(gym.Env):
             if np.random.random() < 0.5
             else self.observation_space.high
         )
+        self.current_observation = first_observation
+        if return_info:
+            return (first_observation, {})
+        return first_observation
+
+
+class Probe3(gym.Env):
+    """One action, [0.0] then [1.0] observation, two timesteps, +1 reward at the end.
+
+    We expect the agent to rapidly learn the discounted value of the initial observation.
+    """
+
+    action_space: Discrete
+    observation_space: Box
+
+    def __init__(self):
+        super().__init__()
+        self.observation_space = Box(np.array([0.0]), np.array([1.0]))
+        self.action_space = Discrete(1)
+        self.current_observation: Optional[np.ndarray] = None
+        self.seed()
+        self.reset()
+
+    def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
+        assert self.current_observation is not None
+
+        if self.current_observation == np.array([0.0]):
+            next_obs = np.array([1.0])
+            reward = 0
+            done = False
+            info = {}
+            self.current_observation = next_obs
+        else:
+            next_obs = np.array([0.0])
+            reward = 1.0
+            done = True
+            info = {}
+            self.current_observation = next_obs
+
+        if done:
+            next_obs = self.reset()
+            assert isinstance(next_obs, ObsType)
+
+        return (next_obs, reward, done, info)
+
+    def reset(
+        self, seed: Optional[int] = None, return_info=False, options=None
+    ) -> Union[ObsType, tuple[ObsType, dict]]:
+        first_observation = np.array([0.0])
         self.current_observation = first_observation
         if return_info:
             return (first_observation, {})
