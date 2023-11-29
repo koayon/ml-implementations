@@ -17,7 +17,8 @@ class DQNArgs:
     capture_video: bool = False
     env_id: str = "CartPole-v1"
     total_timesteps: int = 500000
-    learning_rate: float = 0.00025
+    # learning_rate: float = 0.00025
+    learning_rate: float = 1e-4
     buffer_size: int = 10000
     gamma: float = 0.99
     target_network_frequency: int = 500
@@ -27,6 +28,10 @@ class DQNArgs:
     exploration_fraction: float = 0.5
     learning_starts: int = 10000
     train_frequency: int = 10
+
+    target_noise: float = 0.001
+    weight_decay: float = 0.003
+    hidden_sizes: Optional[list[int]] = None
 
 
 arg_help_strings = {

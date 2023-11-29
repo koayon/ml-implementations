@@ -130,22 +130,28 @@ def train_dqn(args: DQNArgs):
     print("Set-up complete. Running experiment: ", run_name)
 
     # Initialise the q-network, optimizer, and replay buffer
-    dim_observation = envs.single_observation_space.shape[0]
+    dim_observation = np.array(envs.single_observation_space.shape).prod()
     num_total_possible_actions = envs.single_action_space.n
 
     q_network = QNetwork(
         dim_observation=dim_observation,
+        hidden_sizes=args.hidden_sizes,
         num_actions=num_total_possible_actions,
     ).to(device)
 
     # Initialise the target network to be the same as the q-network
     q_target_network = QNetwork(
         dim_observation=dim_observation,
+        hidden_sizes=args.hidden_sizes,
         num_actions=num_total_possible_actions,
     ).to(device)
     q_target_network.load_state_dict(q_network.state_dict())
 
-    optimizer = t.optim.Adam(q_network.parameters(), lr=args.learning_rate)
+    optimizer = t.optim.Adam(
+        q_network.parameters(),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+    )
 
     rb = ReplayBuffer(
         buffer_size=args.buffer_size,
@@ -188,7 +194,7 @@ def train_dqn(args: DQNArgs):
                 real_next_obs[i] = infos[i]["terminal_observation"]
 
         # Add state to the replay buffer
-        rb.add(obs, actions, rewards, dones, real_next_obs)
+        rb.add(obs, actions, rewards, dones, next_obs)
 
         obs = next_obs
 
@@ -234,6 +240,8 @@ def train_dqn(args: DQNArgs):
             ) * (
                 1 - replay_buffer_samples.dones.flatten()
             )  # [num_samples]
+            if args.target_noise:
+                target_q_values += args.target_noise * np.random.randn()
 
             # Compute TD-loss normalised by the batch size
             loss: t.Tensor = t.norm(
@@ -275,7 +283,8 @@ if __name__ == "__main__":
 
     register_probe_environments()
 
-    args.env_id = "Probe2-v0"
+    args.env_id = "Probe3-v0"
+    args.hidden_sizes = [10, 5]
     # args.total_timesteps = 100000
 
     train_dqn(args)
