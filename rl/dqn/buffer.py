@@ -38,7 +38,7 @@ class ReplayBufferSamples:
     def __len__(self):
         return len(self.observations)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> "ReplayBufferSamples":
         return ReplayBufferSamples(
             observations=self.observations[idx],
             actions=self.actions[idx],

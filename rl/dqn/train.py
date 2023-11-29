@@ -1,18 +1,22 @@
 import random
 import time
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Tuple, Union
 
 import gym
+import gym.vector
 import numpy as np
 import torch as t
+import torch.backends.cudnn
 from gym.spaces import Box, Discrete
 from numpy.random import Generator
-from rl_utils import make_env
+from torch import optim
 
-from helpers import allclose, assert_all_equal
+from helpers import allclose
 from rl.dqn.args import DQNArgs
 from rl.dqn.buffer import ReplayBuffer
 from rl.dqn.model import QNetwork
+from rl.dqn.probes import PROBE_ENV_CONFIGS, register_probe_environments
+from rl.rl_utils import make_env
 
 
 def linear_schedule(
@@ -30,7 +34,7 @@ def linear_schedule(
 
 
 def epsilon_greedy_policy(
-    envs: gym.vector.SyncVectorEnv,  # type: ignore
+    envs: gym.vector.SyncVectorEnv,
     q_network: QNetwork,
     rng: Generator,
     obs: t.Tensor,
@@ -64,7 +68,7 @@ def epsilon_greedy_policy(
 
 def setup(
     args: DQNArgs,
-) -> Tuple[str, np.random.Generator, t.device, gym.vector.SyncVectorEnv]:  # type: ignore
+) -> Tuple[str, np.random.Generator, t.device, gym.vector.SyncVectorEnv]:
     """Helper function to set up useful variables for the DQN implementation"""
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -84,11 +88,11 @@ def setup(
     t.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
 
-    t.backends.cudnn.deterministic = args.torch_deterministic  # type: ignore
+    torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = t.device("cuda" if t.cuda.is_available() and args.cuda else "cpu")
 
-    envs = gym.vector.SyncVectorEnv(  # type: ignore
+    envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, args.seed, 0, args.capture_video, run_name)]
     )
     assert isinstance(
@@ -108,16 +112,17 @@ def log(
     """Helper function to write relevant info to logs, and print some things to stdout"""
     if step % 100 == 0:
         print("losses/td_loss", loss, step)
-        print("losses/q_values", predicted_q_vals.mean().item(), step)
-        print("charts/SPS", int(step / (time.time() - start_time)), step)
-        if step % 10000 == 0:
-            print("SPS:", int(step / (time.time() - start_time)))
+        # print("losses/q_values", predicted_q_vals.mean().item(), step)
+        # print("charts/SPS", int(step / (time.time() - start_time)), step)
+        # if step % 1000 == 0:
+        # print("SPS:", int(step / (time.time() - start_time)))
+
     for info in infos:
         if "episode" in info.keys():
-            print(f"global_step={step}, episodic_return={info['episode']['r']}")
-            print("charts/episodic_return", info["episode"]["r"], step)
-            print("charts/episodic_length", info["episode"]["l"], step)
-            print("charts/epsilon", epsilon, step)
+            # print(f"global_step={step}, episodic_return={info['episode']['r']}")
+            # print("charts/episodic_return", info["episode"]["r"], step)
+            # print("charts/episodic_length", info["episode"]["l"], step)
+            # print("charts/epsilon", epsilon, step)
             break
 
 
@@ -134,10 +139,12 @@ def train_dqn(args: DQNArgs):
         num_actions=num_total_possible_actions,
     ).to(device)
 
+    # Initialise the target network to be the same as the q-network
     q_target_network = QNetwork(
         dim_observation=dim_observation,
         num_actions=num_total_possible_actions,
     ).to(device)
+    q_target_network.load_state_dict(q_network.state_dict())
 
     optimizer = t.optim.Adam(q_network.parameters(), lr=args.learning_rate)
 
@@ -150,7 +157,8 @@ def train_dqn(args: DQNArgs):
     )
 
     start_time = time.time()
-    obs = envs.reset()
+    obs: np.ndarray = envs.reset()
+
     for step in range(args.total_timesteps):
         # Sample actions according to the epsilon greedy policy using the linear
         # schedule for epsilon, and then step the environment
@@ -163,7 +171,7 @@ def train_dqn(args: DQNArgs):
             total_timesteps=args.total_timesteps,
         )
         actions = epsilon_greedy_policy(
-            envs, q_network=q_network, rng=rng, obs=obs, epsilon=epsilon
+            envs, q_network=q_network, rng=rng, obs=t.tensor(obs), epsilon=epsilon
         )
 
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -177,7 +185,7 @@ def train_dqn(args: DQNArgs):
         # Add state to the replay buffer
         rb.add(obs, actions, rewards, dones, next_obs)
 
-        obs = next_obs
+        obs = real_next_obs
 
         if step > args.learning_starts and step % args.train_frequency == 0:
             # Sample from the replay buffer, compute the TD target, compute TD
@@ -185,13 +193,21 @@ def train_dqn(args: DQNArgs):
             replay_buffer_samples = rb.sample(
                 sample_size=args.batch_size, device=device
             )
+
             sampled_observations = (
                 replay_buffer_samples.observations
-            )  # [num_environments, num_samples, observations_shape]
+            )  # [num_samples, observations_shape]
+            sampled_actions = (replay_buffer_samples.actions).to(
+                t.long
+            )  # [num_samples]
 
-            predicted_q_values_for_actions = q_network(
+            predicted_q_values_for_all_actions = q_network(
                 sampled_observations
-            )  # [num_environments, num_samples, num_actions]
+            )  # [num_samples, num_actions]
+
+            predicted_q_values_for_actions_taken = t.gather(
+                predicted_q_values_for_all_actions, 1, sampled_actions.unsqueeze(-1)
+            ).squeeze(1)
 
             # Get targets and loss function
             next_observations = replay_buffer_samples.next_observations
@@ -200,67 +216,61 @@ def train_dqn(args: DQNArgs):
             with t.no_grad():
                 predicted_q_values_after_next_move = q_target_network(
                     next_observations
-                )  # [num_environments, num_samples, num_actions]
-                max_q_val_after_next_move = t.max(
+                )  # [num_samples, num_actions]
+                max_q_val_after_next_move, _ = t.max(
                     predicted_q_values_after_next_move, dim=-1
-                )  # [num_environments, num_samples]
+                )  # [num_samples]
 
             # Target is r + gamma * max_a' Q(s', a') for non-terminal
             # transitions. If done at that step then there are no future
             # rewards.
-            target_q_values = rewards + (
-                args.gamma * t.max(max_q_val_after_next_move)
-            ) * (1 - replay_buffer_samples.dones)
+            target_q_values = rewards.flatten() + (
+                args.gamma * max_q_val_after_next_move
+            ) * (
+                1 - replay_buffer_samples.dones.flatten()
+            )  # [num_samples]
 
             # Compute TD-loss normalised by the batch size
             loss: t.Tensor = t.norm(
-                target_q_values - predicted_q_values_for_actions
+                target_q_values - predicted_q_values_for_actions_taken.squeeze(-1)
             ) / (t.prod(t.tensor(target_q_values.shape)))
+
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            log(start_time, step, predicted_q_values_for_actions, loss, infos, epsilon)
+            log(
+                start_time,
+                step,
+                predicted_q_values_for_all_actions,
+                loss,
+                infos,
+                epsilon,
+            )
 
         # Update the target network
         if step % args.target_network_frequency == 0:
             q_target_network.load_state_dict(q_network.state_dict())
 
-    "If running one of the Probe environments, will test if the learned q-values are sensible after training. Useful for debugging."
-    if args.env_id == "Probe1-v0":
-        batch = t.tensor([[0.0]]).to(device)
+    # If running one of the Probe environments, will test if the learned
+    # q-values are sensible after training. Useful for debugging.
+    if args.env_id in PROBE_ENV_CONFIGS:
+        probe_env_config = PROBE_ENV_CONFIGS[args.env_id]
+
+        batch = probe_env_config.batch.to(device)
         value = q_network(batch)
         print("Value: ", value)
-        expected = t.tensor([[1.0]]).to(device)
-        allclose(value, expected, 0.0001)
-    elif args.env_id == "Probe2-v0":
-        batch = t.tensor([[-1.0], [+1.0]]).to(device)
-        value = q_network(batch)
-        print("Value:", value)
-        expected = batch
-        allclose(value, expected, 0.0001)
-    elif args.env_id == "Probe3-v0":
-        batch = t.tensor([[0.0], [1.0]]).to(device)
-        value = q_network(batch)
-        print("Value: ", value)
-        expected = t.tensor([[args.gamma], [1.0]])
-        allclose(value, expected, 0.0001)
-    elif args.env_id == "Probe4-v0":
-        batch = t.tensor([[0.0]]).to(device)
-        value = q_network(batch)
-        expected = t.tensor([[-1.0, 1.0]]).to(device)
-        print("Value: ", value)
-        allclose(value, expected, 0.0001)
-    elif args.env_id == "Probe5-v0":
-        batch = t.tensor([[0.0], [1.0]]).to(device)
-        value = q_network(batch)
-        expected = t.tensor([[1.0, -1.0], [-1.0, 1.0]]).to(device)
-        print("Value: ", value)
-        allclose(value, expected, 0.0001)
-    envs.close()
+
+        # Test if the q-values are close to the expected values
+        allclose(value, probe_env_config.expected.to(device), 0.0001)
 
 
 if __name__ == "__main__":
     args = DQNArgs()
+
+    register_probe_environments()
+
     args.env_id = "Probe1-v0"
+    args.total_timesteps = 10000
 
     train_dqn(args)
