@@ -105,7 +105,7 @@ class ReplayBuffer:
             [self.buffer.next_observations, t.tensor(next_obs, dtype=t.float)]
         )
 
-        assert len(self.buffer) == prev_len + len(obs)
+        assert len(self.buffer) == prev_len + len(obs), "Buffer size wrong size"
 
         if len(self.buffer) >= self.buffer_size:
             self.buffer.observations = self.buffer.observations[-self.buffer_size :]

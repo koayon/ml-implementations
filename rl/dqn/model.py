@@ -13,7 +13,7 @@ class QNetwork(nn.Module):
         dropout: float = 0.2,
     ):
         super().__init__()
-        assert hidden_sizes is not None
+        assert hidden_sizes is not None, "Hidden size is None"
 
         l1 = nn.Linear(dim_observation, hidden_sizes[0])
         relu = nn.ReLU()

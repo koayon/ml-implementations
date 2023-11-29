@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -31,7 +31,7 @@ class DQNArgs:
 
     target_noise: float = 0.001
     weight_decay: float = 0.0005
-    hidden_sizes: Optional[list[int]] = None
+    hidden_sizes: Optional[list[int]] = field(default_factory=lambda: [120, 84])
     dropout: float = 0.3
 
 
