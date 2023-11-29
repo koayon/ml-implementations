@@ -137,7 +137,7 @@ def log(
             # Log episodic data to wandb
             wandb.log(episodic_data, step=step)
 
-            if (step % 1000 == 0) and print_to_console:
+            if (step % 10 == 0) and print_to_console:
                 print(
                     f"Step: {step} | epsilon: {epsilon:2f} | episode reward: {episode_reward}",
                 )
@@ -309,8 +309,8 @@ if __name__ == "__main__":
 
     register_probe_environments()
 
-    args.env_id = "Probe5-v0"
-    args.hidden_sizes = [20, 10]
+    # args.env_id = "Probe5-v0"
+    # args.hidden_sizes = [20, 10]
     # args.weight_decay = 0
     log_to_wandb = True
     # args.total_timesteps = 5000
