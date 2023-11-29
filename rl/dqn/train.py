@@ -111,7 +111,7 @@ def log(
     """Helper function to write relevant info to logs, and print some things to stdout"""
     if step % 100 == 0:
         print("losses/td_loss", loss, step)
-        # print("losses/q_values", predicted_q_vals.mean().item(), step)
+        print("losses/q_values", t.mean(predicted_q_vals, dim=0), step)
         # print("charts/SPS", int(step / (time.time() - start_time)), step)
         # if step % 1000 == 0:
         # print("SPS:", int(step / (time.time() - start_time)))
@@ -277,6 +277,8 @@ def train_dqn(args: DQNArgs):
         # Test if the q-values are close to the expected values
         allclose_atol(value, probe_env_config.expected.to(device), 0.005)
 
+    return q_network
+
 
 if __name__ == "__main__":
     args = DQNArgs()
@@ -288,4 +290,4 @@ if __name__ == "__main__":
     args.end_e = 0.3
     # args.total_timesteps = 100000
 
-    train_dqn(args)
+    q_network = train_dqn(args)
