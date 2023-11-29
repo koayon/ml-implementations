@@ -26,7 +26,7 @@ def register_probe_environments():
     gym.envs.registration.register(id="Probe2-v0", entry_point=Probe2)
     gym.envs.registration.register(id="Probe3-v0", entry_point=Probe3)
     gym.envs.registration.register(id="Probe4-v0", entry_point=Probe4)
-    # gym.envs.registration.register(id="Probe5-v0", entry_point=Probe5)
+    gym.envs.registration.register(id="Probe5-v0", entry_point=Probe5)
 
 
 PROBE_ENV_CONFIGS = {
@@ -206,6 +206,7 @@ class Probe4(gym.Env):
         self, seed: Optional[int] = None, return_info=False, options=None
     ) -> Union[ObsType, tuple[ObsType, dict]]:
         first_observation = np.array([0.0])
+
         self.current_observation = first_observation
 
         if return_info:
@@ -214,22 +215,46 @@ class Probe4(gym.Env):
         return first_observation
 
 
-# class Probe5(gym.Env):
-#     """Two actions, random 0/1 observation, one timestep, reward is 1 if action equals observation otherwise -1.
+class Probe5(gym.Env):
+    """Two actions, random 0/1 observation, one timestep, reward is 1 if action equals observation otherwise -1.
 
-#     We expect the agent to learn to match its action to the observation.
-#     """
+    We expect the agent to learn to match its action to the observation.
+    """
 
-#     action_space: Discrete
-#     observation_space: Box
+    action_space: Discrete
+    observation_space: Box
 
-#     def __init__(self):
-#         pass
+    def __init__(self):
+        super().__init__()
+        self.observation_space = Box(np.array([0.0]), np.array([1.0]))
+        self.action_space = Discrete(2)
+        self.current_observation: Optional[np.ndarray] = None
+        self.seed()
+        self.reset()
 
-#     def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
-#         pass
+    def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
+        assert self.current_observation is not None
 
-#     def reset(
-#         self, seed: Optional[int] = None, return_info=False, options=None
-#     ) -> Union[ObsType, tuple[ObsType, dict]]:
-#         pass
+        next_obs = self.current_observation
+        reward = 1.0 if action == self.current_observation else -1.0
+        done = True
+        info = {}
+        self.current_observation = next_obs
+
+        if done:
+            next_obs = self.reset()
+            assert isinstance(next_obs, ObsType)
+
+        return (next_obs, reward, done, info)
+
+    def reset(
+        self, seed: Optional[int] = None, return_info=False, options=None
+    ) -> Union[ObsType, tuple[ObsType, dict]]:
+        first_observation = np.array([np.random.choice(np.array([0.0, 1.0]))])
+
+        self.current_observation = first_observation
+
+        if return_info:
+            return (first_observation, {})
+
+        return first_observation

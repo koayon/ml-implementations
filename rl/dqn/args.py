@@ -30,8 +30,9 @@ class DQNArgs:
     train_frequency: int = 10
 
     target_noise: float = 0.001
-    weight_decay: float = 0.003
+    weight_decay: float = 0.0005
     hidden_sizes: Optional[list[int]] = None
+    dropout: float = 0.3
 
 
 arg_help_strings = {
