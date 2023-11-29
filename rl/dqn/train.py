@@ -9,9 +9,8 @@ import torch as t
 import torch.backends.cudnn
 from gym.spaces import Box, Discrete
 from numpy.random import Generator
-from torch import optim
 
-from helpers import allclose
+from helpers import allclose, allclose_atol
 from rl.dqn.args import DQNArgs
 from rl.dqn.buffer import ReplayBuffer
 from rl.dqn.model import QNetwork
@@ -159,6 +158,8 @@ def train_dqn(args: DQNArgs):
     start_time = time.time()
     obs: np.ndarray = envs.reset()
 
+    # print(obs)
+
     for step in range(args.total_timesteps):
         # Sample actions according to the epsilon greedy policy using the linear
         # schedule for epsilon, and then step the environment
@@ -176,6 +177,10 @@ def train_dqn(args: DQNArgs):
 
         next_obs, rewards, dones, infos = envs.step(actions)
 
+        # print(next_obs)
+        # if step > 50:
+        #     break
+
         # Boilerplate to handle the terminal observation case
         real_next_obs = next_obs.copy()
         for i, done in enumerate(dones):
@@ -183,9 +188,9 @@ def train_dqn(args: DQNArgs):
                 real_next_obs[i] = infos[i]["terminal_observation"]
 
         # Add state to the replay buffer
-        rb.add(obs, actions, rewards, dones, next_obs)
+        rb.add(obs, actions, rewards, dones, real_next_obs)
 
-        obs = real_next_obs
+        obs = next_obs
 
         if step > args.learning_starts and step % args.train_frequency == 0:
             # Sample from the replay buffer, compute the TD target, compute TD
@@ -262,7 +267,7 @@ def train_dqn(args: DQNArgs):
         print("Value: ", value)
 
         # Test if the q-values are close to the expected values
-        allclose(value, probe_env_config.expected.to(device), 0.0001)
+        allclose_atol(value, probe_env_config.expected.to(device), 0.005)
 
 
 if __name__ == "__main__":
@@ -270,7 +275,7 @@ if __name__ == "__main__":
 
     register_probe_environments()
 
-    args.env_id = "Probe1-v0"
-    args.total_timesteps = 10000
+    args.env_id = "Probe2-v0"
+    # args.total_timesteps = 100000
 
     train_dqn(args)

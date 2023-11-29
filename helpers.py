@@ -65,6 +65,18 @@ def allclose(actual: t.Tensor, expected: t.Tensor, rtol=1e-4) -> bool:
     return True
 
 
+def allclose_atol(actual: t.Tensor, expected: t.Tensor, atol: float) -> None:
+    assert_shape_equal(actual, expected)
+    left = (actual - expected).abs()
+    pct_wrong = int(100 * (left > atol).float().mean())
+    if pct_wrong > 0:
+        print(f"Test failed. Max absolute deviation: {left.max()}")
+        print(f"Actual:\n{actual}\nExpected:\n{expected}")
+        raise AssertionError(
+            f"allclose failed with {pct_wrong} percent of entries outside tolerance"
+        )
+
+
 def check_leaf_nodes(model: nn.Module) -> dict[str, bool]:
     out = {}
     for p in model.named_parameters():
