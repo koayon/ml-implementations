@@ -25,7 +25,7 @@ def register_probe_environments():
     gym.envs.registration.register(id="Probe1-v0", entry_point=Probe1)
     gym.envs.registration.register(id="Probe2-v0", entry_point=Probe2)
     gym.envs.registration.register(id="Probe3-v0", entry_point=Probe3)
-    # gym.envs.registration.register(id="Probe4-v0", entry_point=Probe4)
+    gym.envs.registration.register(id="Probe4-v0", entry_point=Probe4)
     # gym.envs.registration.register(id="Probe5-v0", entry_point=Probe5)
 
 
@@ -170,25 +170,48 @@ class Probe3(gym.Env):
         return first_observation
 
 
-# class Probe4(gym.Env):
-#     """Two actions, [0.0] observation, one timestep, reward is -1.0 or +1.0 dependent on the action.
+class Probe4(gym.Env):
+    """Two actions, [0.0] observation, one timestep, reward is -1.0 or +1.0 dependent on the action.
 
-#     We expect the agent to learn to choose the +1.0 action.
-#     """
+    We expect the agent to learn to choose the +1.0 action.
+    """
 
-#     action_space: Discrete
-#     observation_space: Box
+    action_space: Discrete
+    observation_space: Box
 
-#     def __init__(self):
-#         pass
+    def __init__(self):
+        super().__init__()
+        self.observation_space = Box(np.array([0.0]), np.array([0.0]))
+        self.action_space = Discrete(2)
+        self.current_observation: Optional[np.ndarray] = None
+        self.seed()
+        self.reset()
 
-#     def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
-#         pass
+    def step(self, action: ActType) -> tuple[ObsType, float, bool, dict]:
+        assert self.current_observation is not None
 
-#     def reset(
-#         self, seed: Optional[int] = None, return_info=False, options=None
-#     ) -> Union[ObsType, tuple[ObsType, dict]]:
-#         pass
+        next_obs = np.array([0.0])
+        reward = 1.0 if action > 0 else -1.0
+        done = True
+        info = {}
+        self.current_observation = next_obs
+
+        if done:
+            next_obs = self.reset()
+            assert isinstance(next_obs, ObsType)
+
+        return (next_obs, reward, done, info)
+
+    def reset(
+        self, seed: Optional[int] = None, return_info=False, options=None
+    ) -> Union[ObsType, tuple[ObsType, dict]]:
+        first_observation = np.array([0.0])
+        self.current_observation = first_observation
+
+        if return_info:
+            return (first_observation, {})
+
+        return first_observation
 
 
 # class Probe5(gym.Env):

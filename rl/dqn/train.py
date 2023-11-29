@@ -283,8 +283,9 @@ if __name__ == "__main__":
 
     register_probe_environments()
 
-    args.env_id = "Probe3-v0"
-    args.hidden_sizes = [10, 5]
+    args.env_id = "Probe4-v0"
+    args.hidden_sizes = [20, 10]
+    args.end_e = 0.3
     # args.total_timesteps = 100000
 
     train_dqn(args)
