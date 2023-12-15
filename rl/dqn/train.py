@@ -114,7 +114,7 @@ def log(
         # Prepare data for logging
         log_data = {
             "losses/td_loss": loss.item() if isinstance(loss, t.Tensor) else loss,
-            "losses/q_values": t.mean(predicted_q_vals, dim=0).tolist(),
+            "losses/q_values": t.mean(predicted_q_vals).item(),
         }
 
         # Log data to wandb

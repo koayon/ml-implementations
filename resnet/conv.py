@@ -55,7 +55,9 @@ def force_pair(v: IntOrPair) -> Pair:
     raise ValueError(v)
 
 
-def conv2d(x, weights, stride: IntOrPair = 1, padding: IntOrPair = 0) -> t.Tensor:
+def conv2d(
+    x: t.Tensor, weights: t.Tensor, stride: IntOrPair = 1, padding: IntOrPair = 0
+) -> t.Tensor:
     """Replication of torch's conv2d using bias=False
 
     x: shape (batch, in_channels, height, width)
