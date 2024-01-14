@@ -1,17 +1,17 @@
 import random
 import time
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Tuple
 
 import gym
 import gym.vector
 import numpy as np
 import torch as t
 import torch.backends.cudnn
-from gym.spaces import Box, Discrete
+from gym.spaces import Discrete
 from numpy.random import Generator
 
 import wandb
-from helpers import allclose, allclose_atol
+from helpers import allclose_atol
 from rl.dqn.args import DQNArgs
 from rl.dqn.buffer import ReplayBuffer
 from rl.dqn.model import QNetwork
