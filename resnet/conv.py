@@ -124,7 +124,9 @@ class Conv2d(nn.Module):
 
         kernel = t.randn((out_channels, in_channels, kernel_pair[0], kernel_pair[1]))
 
-        self.weight = nn.Parameter((((kernel) * 2) - 1) / (np.sqrt(in_features)))
+        self.weight = nn.Parameter(
+            (((kernel) * 2) - 1) / (np.sqrt(in_features)),
+        )
         self.stride = stride
         self.padding = padding
 

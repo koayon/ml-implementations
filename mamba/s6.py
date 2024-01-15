@@ -7,6 +7,41 @@ from jaxtyping import Bool, Float, Int
 from torch.nn import functional as F
 
 
+class SSM(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def _forward_recurrent(
+        self,
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        C: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        x: Float[t.Tensor, "batch seq_len dim"],
+    ) -> Float[t.Tensor, "batch seq_len dim"]:
+        raise NotImplementedError
+
+    def _forward_scan(
+        self,
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        C: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        x: Float[t.Tensor, "batch seq_len dim"],
+    ) -> Float[t.Tensor, "batch seq_len dim"]:
+        raise NotImplementedError
+
+    def forward(
+        self,
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        C: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        x: Float[t.Tensor, "batch seq_len dim"],
+    ) -> Float[t.Tensor, "batch seq_len dim"]:
+        if self.training:
+            self._forward_scan(A, B, C, x)
+        else:
+            self._forward_recurrent(A, B, C, x)
+
+
 class S6(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
