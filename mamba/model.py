@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-
+import tiktoken as tk
 import torch as t
 import torch.nn as nn
 from jaxtyping import Float
@@ -30,9 +29,8 @@ class Mamba(nn.Module):
 
         self.final_layer_norm = nn.LayerNorm(config.residual_dim)
 
-        self.embedding_matrix = self.embedding.weight
         self.unembed = nn.Linear(config.residual_dim, config.vocab_size, bias=False)
-        self.unembed.weight = self.embedding_matrix.T  # tie weights
+        self.unembed.weight = nn.Parameter(self.embedding.weight)  # tie weights
 
     def noise_embeddings(
         self, x: Float[t.Tensor, "batch seq_len input_dim"], std: float = 0.001
@@ -57,3 +55,15 @@ class Mamba(nn.Module):
         logits = self.unembed(y)  # batch, seq_len, vocab_size
 
         return logits
+
+
+if __name__ == "__main__":
+    prompt = "I am become Death, the destroyer of worlds."
+    tokenizer = tk.encoding_for_model("gpt2")
+    tokens_list = tokenizer.encode(prompt)
+    tokens = t.tensor(tokens_list).unsqueeze(0)  # batch, seq_len
+
+    mamba = Mamba()
+    logits = mamba(tokens)
+    print(logits.shape)
+    print("Done!")
