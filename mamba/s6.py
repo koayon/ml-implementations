@@ -6,6 +6,7 @@ import torch.nn as nn
 from einops import einsum, rearrange, repeat
 from jax import Array
 from jaxtyping import Bool, Float, Int
+from numpy import einsum_path
 from torch.nn import functional as F
 
 
@@ -15,15 +16,15 @@ class SSM(nn.Module):
 
     def _forward_recurrent(
         self,
-        A: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
-        B: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
-    ) -> Float[t.Tensor, "batch seq_len dim"]:
+    ) -> Float[t.Tensor, "batch seq_len input_dim"]:
         batch_size, seq_len, input_dim, hidden_dim = A.shape
 
-        h: Float[t.Tensor, "batch seq_len hidden_dim"] = t.zeros(
-            batch_size, seq_len, hidden_dim
+        h: Float[t.Tensor, "batch seq_len input_dim hidden_dim"] = t.zeros(
+            batch_size, seq_len, input_dim, hidden_dim
         )
         y_list: list[Float[t.Tensor, "batch input_dim"]] = []
         for seq_num in range(seq_len):
@@ -33,14 +34,14 @@ class SSM(nn.Module):
             B_xt = einsum(
                 B[:, seq_num, :, :],
                 x[:, seq_num, :],
-                "batch hidden_dim input_dim, batch hidden_dim -> batch hidden_dim",
-            )  # B x_t
+                "batch input_dim hidden_dim, batch input_dim -> batch input_dim hidden_dim",
+            )  # B x_t  # batch, input_dim, hidden_dim
             if seq_num:
                 A_h_t1 = einsum(
                     A[:, seq_num, :, :],
-                    h[:, seq_num - 1, :],
-                    "batch hidden_dim input_dim, batch hidden_dim -> batch hidden_dim",
-                )  # A h_{t-1}
+                    h[:, seq_num - 1, :, :],
+                    "batch input_dim hidden_dim, batch input_dim hidden_dim -> batch input_dim hidden_dim",
+                )  # batch, input_dim, hidden_dim
                 h[:, seq_num, :] = A_h_t1 + B_xt  # h_t
             else:
                 h[:, seq_num, :] = B_xt  # h_t
@@ -48,21 +49,19 @@ class SSM(nn.Module):
             y_t = einsum(
                 C[:, seq_num, :],
                 h[:, seq_num, :],
-                "batch hidden_dim, batch hidden_dim -> batch input_dim",
+                "batch hidden_dim, batch input_dim hidden_dim -> batch input_dim",
             )  # C h_t  # batch, input_dim
 
             y_list.append(y_t)
 
         y = t.stack(y_list, dim=1)  # batch, seq_len, input_dim
 
-        # TODO: Something off with shape of B I thinkkk
-
         return y
 
     def _forward_convolutional_scan(
         self,
-        A: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
-        B: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
@@ -70,8 +69,8 @@ class SSM(nn.Module):
 
     def forward(
         self,
-        A: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
-        B: Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
+        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
@@ -91,13 +90,10 @@ class S6(nn.Module):
         nn.init.xavier_uniform_(A)
         self.A = nn.Parameter(A)  # input_dim, hidden_dim
 
-        self.W_B = nn.Linear(input_dim, hidden_dim)
-        self.W_C = nn.Linear(input_dim, hidden_dim)
+        self.W_B = nn.Linear(input_dim, hidden_dim, bias=False)
+        self.W_C = nn.Linear(input_dim, hidden_dim, bias=False)
 
-        delta_param = t.zeros(input_dim)
-        self.delta_param = nn.Parameter(delta_param)  # input_dim
-
-        self.W_delta = nn.Linear(input_dim, 1)
+        self.W_delta = nn.Linear(input_dim, 1, bias=True)
 
         self.ssm = SSM()
 
@@ -107,28 +103,58 @@ class S6(nn.Module):
         B: Float[t.Tensor, "batch seq_len hidden_dim"],
         delta: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> tuple[
-        Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
-        Float[t.Tensor, "batch seq_len hidden_dim input_dim"],
+        Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+        Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
     ]:
-        raise NotImplementedError
+        """Discretize the continuous-time SSM parameters A and B using delta.
+
+        A is discretized using zero-order hold (ZOH) discretization (see Section 2 Equation 4 in the Mamba paper [1])
+        We use a simplified Euler discretization for B, which is the less important than A for performance.
+
+        In the paper they use the ZOH discretization for both A and B.
+
+        Returns
+        -------
+        A_disc : Float[t.Tensor, "batch seq_len input_dim hidden_dim"]
+
+        B_disc : Float[t.Tensor, "batch seq_len input_dim hidden_dim"]
+        """
+        # Element-wise multiplication and exponentiation
+        delta_A = einsum(
+            delta,
+            A,
+            "batch seq_len input_dim, input_dim hidden_dim -> batch seq_len input_dim hidden_dim",
+        )  # batch, seq_len, input_dim, hidden_dim
+
+        A_disc = t.exp(delta_A)  # batch, seq_len, input_dim, hidden_dim
+
+        delta_B = einsum(
+            delta,
+            B,
+            "batch seq_len input_dim, batch seq_len hidden_dim -> batch seq_len input_dim hidden_dim",
+        )  # batch, seq_len, input_dim, hidden_dim
+
+        return A_disc, delta_B
 
     def forward(
         self,
-        x: Float[t.Tensor, "batch seq_len dim"],
-    ) -> Float[t.Tensor, "batch seq_len dim"]:
+        x: Float[t.Tensor, "batch seq_len input_dim"],
+    ) -> Float[t.Tensor, "batch seq_len input_dim"]:
         B = self.W_B(x)  # batch, seq_len, hidden_dim
         C = self.W_C(x)  # batch, seq_len, hidden_dim
 
         s_delta = repeat(
-            self.W_delta(x), "batch seq_len 1 -> batch seq_len dim", dim=self.input_dim
+            self.W_delta(x),
+            "batch seq_len 1 -> batch seq_len input_dim",
+            dim=self.input_dim,
         )  # batch, seq_len, input_dim
 
-        delta = F.softplus(self.delta_param + s_delta)  # batch, seq_len, input_dim
+        delta = F.softplus(s_delta)  # batch, seq_len, input_dim
 
         A_disc, B_disc = self.discretize(
             self.A, B, delta
         )  # batch, seq_len, hidden_dim, input_dim
 
-        y = self.ssm(A_disc, B_disc, C, x)  # batch, seq_len, dim
+        y = self.ssm(A_disc, B_disc, C, x)  # batch, seq_len, input_dim
 
         return y
