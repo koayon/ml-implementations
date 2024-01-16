@@ -16,6 +16,16 @@ class SSM(nn.Module):
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len input_dim"]:
+        """Run the SSM forward in a recurrent manner.
+
+        Equations 2a and 2b in the Mamba paper.
+
+        Returns
+        -------
+        y : Float[t.Tensor, "batch seq_len input_dim"]
+
+        # TODO: Amend to enable only final step if you have all the previous h values (hidden states)
+        """
         batch_size, seq_len, input_dim, hidden_dim = A.shape
 
         h: Float[t.Tensor, "batch seq_len input_dim hidden_dim"] = t.zeros(
@@ -60,6 +70,17 @@ class SSM(nn.Module):
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
+        """Run the SSM forward using the hardware-efficient scan.
+
+        Equations 3a and 3b in the Mamba paper.
+        Also see Section 3.3.2.
+
+        Returns
+        -------
+        y : Float[t.Tensor, "batch seq_len input_dim"]
+
+        # TODO: Amend to enable only final step if you have all the previous h values (hidden states)
+        """
         raise NotImplementedError
 
     def forward(
@@ -104,7 +125,7 @@ class S6(nn.Module):
     ]:
         """Discretize the continuous-time SSM parameters A and B using delta.
 
-        A is discretized using zero-order hold (ZOH) discretization (see Section 2 Equation 4 in the Mamba paper [1])
+        A is discretized using zero-order hold (ZOH) discretization (see Section 2 Equation 4 in the Mamba paper)
         We use a simplified Euler discretization for B, which is the less important than A for performance.
 
         In the paper they use the ZOH discretization for both A and B.
@@ -136,6 +157,13 @@ class S6(nn.Module):
         self,
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len input_dim"]:
+        """Run the forward pass of the SSM for Mamba. See Section 1, Figure 1 in the Mamba paper.
+        Also see Section 3, Algorithm 2.
+
+        Returns
+        -------
+        y : Float[t.Tensor, "batch seq_len input_dim"]
+        """
         B = self.W_B(x)  # batch, seq_len, hidden_dim
         C = self.W_C(x)  # batch, seq_len, hidden_dim
 
