@@ -1,12 +1,7 @@
-import re
-from typing import Any, Callable, List, Optional, Tuple, Union
-
 import torch as t
 import torch.nn as nn
-from einops import einsum, rearrange, repeat
-from jax import Array
-from jaxtyping import Bool, Float, Int
-from numpy import einsum_path
+from einops import einsum, repeat
+from jaxtyping import Float
 from torch.nn import functional as F
 
 
@@ -75,7 +70,8 @@ class SSM(nn.Module):
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
         if self.training:
-            return self._forward_convolutional_scan(A, B, C, x)
+            # return self._forward_convolutional_scan(A, B, C, x)
+            return self._forward_recurrent(A, B, C, x)
         else:
             return self._forward_recurrent(A, B, C, x)
 
