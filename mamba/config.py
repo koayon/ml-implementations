@@ -8,5 +8,5 @@ class MambaConfig:
     residual_dim: int = 128
     expansion_factor: int = 2
     conv_kernel_size: int = 3
-    num_blocks: int = 1
+    num_blocks: int = 2
     dropout_rate: float = 0.1

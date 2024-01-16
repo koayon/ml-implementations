@@ -33,8 +33,8 @@ class SSM(nn.Module):
         )
         y_list: list[Float[t.Tensor, "batch input_dim"]] = []
         for seq_num in range(seq_len):
-            # h_t = A h_{t-1} + B x_t
-            # y_t = C h_t
+            # h_t = A h_{t-1} + B x_t (element-wise multiplication)
+            # y_t = C h_t (matrix multiplication)
 
             B_xt = einsum(
                 B[:, seq_num, :, :],
@@ -170,7 +170,7 @@ class S6(nn.Module):
         s_delta = repeat(
             self.W_delta(x),
             "batch seq_len 1 -> batch seq_len input_dim",
-            dim=self.input_dim,
+            input_dim=self.input_dim,
         )  # batch, seq_len, input_dim
 
         delta = F.softplus(s_delta)  # batch, seq_len, input_dim

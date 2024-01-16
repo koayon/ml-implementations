@@ -28,8 +28,7 @@ class ResidualBlock(nn.Module):
 
         Returns
         -------
-        _type_
-            _description_
+        x: Float[t.Tensor, "batch seq_len input_dim"]
         """
         y = self.layer_norm(x)
         y = self.mamba_block(y)
@@ -57,7 +56,7 @@ class MambaBlock(nn.Module):
             ssm_input_dim,
             kernel_size=conv_kernel_size,
             groups=ssm_input_dim,
-            padding=conv_kernel_size - 1,
+            padding=conv_kernel_size - 2,
         )
 
         self.s6 = S6(ssm_input_dim, hidden_dim)
@@ -68,6 +67,8 @@ class MambaBlock(nn.Module):
         self, x: Float[t.Tensor, "batch seq_len input_dim"]
     ) -> Float[t.Tensor, "batch seq_len input_dim"]:
         """Convolve on the sequence dimension.
+
+        # TODO: Check convolution padding and kernel size.
 
         Returns
         -------
@@ -96,7 +97,7 @@ class MambaBlock(nn.Module):
         # Project up
         up_x = self.double_up_proj(up_x)  # batch, seq_len, ssm_input_dim * 2
 
-        left_branch_x, right_branch_x = t.split(
+        left_branch_x, right_branch_x = t.chunk(
             up_x, 2, dim=-1
         )  # batch, seq_len, ssm_input_dim
 
