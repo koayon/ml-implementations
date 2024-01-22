@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch as t
 import torch.nn as nn
 from einops import einsum, repeat
@@ -8,6 +10,7 @@ from torch.nn import functional as F
 class SSM(nn.Module):
     def __init__(self):
         super().__init__()
+        self.ssm_state: Optional[Float[t.Tensor, "batch input_dim hidden_dim"]] = None
 
     def _forward_recurrent(
         self,
@@ -15,7 +18,10 @@ class SSM(nn.Module):
         B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
-    ) -> Float[t.Tensor, "batch seq_len input_dim"]:
+    ) -> tuple[
+        Float[t.Tensor, "batch seq_len input_dim"],
+        Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
+    ]:
         """Run the SSM forward in a recurrent manner.
 
         Equations 2a and 2b in the Mamba paper.
@@ -23,15 +29,14 @@ class SSM(nn.Module):
         Returns
         -------
         y : Float[t.Tensor, "batch seq_len input_dim"]
-
-        # TODO: Amend to enable only final step if you have all the previous h values (hidden states)
+        h : Float[t.Tensor, "batch seq_len input_dim hidden_dim"]
         """
         batch_size, seq_len, input_dim, hidden_dim = A.shape
 
         h: Float[t.Tensor, "batch seq_len input_dim hidden_dim"] = t.zeros(
             batch_size, seq_len, input_dim, hidden_dim
         )
-        y_list: list[Float[t.Tensor, "batch input_dim"]] = []
+
         for seq_num in range(seq_len):
             # h_t = A h_{t-1} + B x_t (element-wise multiplication)
             # y_t = C h_t (matrix multiplication)
@@ -41,6 +46,7 @@ class SSM(nn.Module):
                 x[:, seq_num, :],
                 "batch input_dim hidden_dim, batch input_dim -> batch input_dim hidden_dim",
             )  # B x_t  # batch, input_dim, hidden_dim
+
             if seq_num:
                 A_h_t1 = einsum(
                     A[:, seq_num, :, :],
@@ -51,37 +57,15 @@ class SSM(nn.Module):
             else:
                 h[:, seq_num, :] = B_xt  # h_t
 
-            y_t = einsum(
-                C[:, seq_num, :],
-                h[:, seq_num, :],
-                "batch hidden_dim, batch input_dim hidden_dim -> batch input_dim",
-            )  # C h_t  # batch, input_dim
+        y = einsum(
+            C,
+            h,
+            "batch seq_len hidden_dim, batch seq_len input_dim hidden_dim -> batch seq_len input_dim",
+        )  # C h_t  # batch, seq_len, input_dim
 
-            y_list.append(y_t)
+        self.ssm_state = h[:, -1, ...]  # batch, input_dim, hidden_dim
 
-        y = t.stack(y_list, dim=1)  # batch, seq_len, input_dim
-
-        return y
-
-    def _forward_convolutional_scan(
-        self,
-        A: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
-        B: Float[t.Tensor, "batch seq_len input_dim hidden_dim"],
-        C: Float[t.Tensor, "batch seq_len hidden_dim"],
-        x: Float[t.Tensor, "batch seq_len input_dim"],
-    ) -> Float[t.Tensor, "batch seq_len dim"]:
-        """Run the SSM forward using the hardware-efficient scan.
-
-        Equations 3a and 3b in the Mamba paper.
-        Also see Section 3.3.2.
-
-        Returns
-        -------
-        y : Float[t.Tensor, "batch seq_len input_dim"]
-
-        # TODO: Amend to enable only final step if you have all the previous h values (hidden states)
-        """
-        raise NotImplementedError
+        return y, h
 
     def forward(
         self,
@@ -90,11 +74,13 @@ class SSM(nn.Module):
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
-        if self.training:
-            # return self._forward_convolutional_scan(A, B, C, x)
-            return self._forward_recurrent(A, B, C, x)
+        if self.ssm_state:
+            y = self.step(A, B, C, x)
+            return y
+
         else:
-            return self._forward_recurrent(A, B, C, x)
+            y, _ = self._forward_recurrent(A, B, C, x)
+            return y
 
 
 class S6(nn.Module):
