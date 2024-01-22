@@ -61,9 +61,9 @@ if __name__ == "__main__":
     prompt = "I am become Death, the destroyer of worlds."
     tokenizer = tk.encoding_for_model("gpt2")
     tokens_list = tokenizer.encode(prompt)
-    tokens = t.tensor(tokens_list).unsqueeze(0)  # batch, seq_len
+    tokens = t.tensor(tokens_list, device="mps").unsqueeze(0)  # batch, seq_len
 
-    mamba = Mamba()
+    mamba = Mamba().to("mps")
     logits = mamba(tokens)
     print(logits.shape)
     print("Done!")
