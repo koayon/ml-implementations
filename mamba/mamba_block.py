@@ -7,7 +7,7 @@ from mamba.config import MambaConfig
 from mamba.s6 import S6
 
 
-class ResidualBlock(nn.Module):
+class MambaResidualBlock(nn.Module):
     def __init__(self, config: MambaConfig = MambaConfig()):
         super().__init__()
 
@@ -45,7 +45,7 @@ class MambaBlock(nn.Module):
     ):
         super().__init__()
 
-        ssm_input_dim = hidden_dim * expansion_factor
+        ssm_input_dim = residual_dim * expansion_factor
 
         self.double_up_proj = nn.Linear(residual_dim, ssm_input_dim * 2)
 
@@ -59,7 +59,7 @@ class MambaBlock(nn.Module):
             padding=conv_kernel_size - 2,
         )
 
-        self.s6 = S6(ssm_input_dim, hidden_dim)
+        self.s6 = S6(input_dim=ssm_input_dim, hidden_dim=hidden_dim)
 
         self.down_proj = nn.Linear(ssm_input_dim, residual_dim)
 
