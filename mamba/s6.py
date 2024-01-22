@@ -144,16 +144,16 @@ class SSM(nn.Module):
         C: Float[t.Tensor, "batch seq_len hidden_dim"],
         x: Float[t.Tensor, "batch seq_len input_dim"],
     ) -> Float[t.Tensor, "batch seq_len dim"]:
-        if self.ssm_state:
+        if self.ssm_state is None:
+            y, _ = self._forward_recurrent(A, B, C, x)
+            return y
+
+        else:
             x_final = x[:, -1, :]  # batch, input_dim
             A_final = A[:, -1, :, :]  # batch, input_dim, hidden_dim
             B_final = B[:, -1, :, :]  # batch, input_dim, hidden_dim
             C_final = C[:, -1, :]  # batch, hidden_dim
             y = self.step(A_final, B_final, C_final, x_final)
-            return y
-
-        else:
-            y, _ = self._forward_recurrent(A, B, C, x)
             return y
 
 

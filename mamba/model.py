@@ -4,7 +4,7 @@ import torch.nn as nn
 from jaxtyping import Float
 
 from mamba.config import MambaConfig
-from mamba.mamba_block import ResidualBlock
+from mamba.mamba_block import MambaResidualBlock
 
 
 class Mamba(nn.Module):
@@ -18,9 +18,9 @@ class Mamba(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout_rate)
 
-        self.residual_mamba_blocks = nn.ModuleList(
+        self.layers = nn.ModuleList(
             [
-                ResidualBlock(
+                MambaResidualBlock(
                     config=config,
                 )
                 for _ in range(config.num_blocks)
@@ -47,7 +47,7 @@ class Mamba(nn.Module):
         x = self.dropout(x)
 
         # TODO: Check for previous cache of h values to do recurrent operation
-        for mamba_block in self.residual_mamba_blocks:
+        for mamba_block in self.layers:
             x = mamba_block(x)  # batch, seq_len, input_dim
 
         y = self.final_layer_norm(x)
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     prompt = "I am become Death, the destroyer of worlds."
     tokenizer = tk.encoding_for_model("gpt2")
     tokens_list = tokenizer.encode(prompt)
-    tokens = t.tensor(tokens_list, device="mps").unsqueeze(0)  # batch, seq_len
+    tokens = t.tensor(tokens_list, device="mps").unsqueeze(0)  # batch, seq_len, 1
 
     mamba = Mamba().to("mps")
     logits = mamba(tokens)
