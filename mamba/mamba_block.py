@@ -7,6 +7,18 @@ from mamba.config import MambaConfig
 from mamba.s6 import S6
 
 
+class RMSNorm(nn.Module):
+    def __init__(self, d_model: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(t.ones(d_model))
+
+    def forward(self, x):
+        output = x * t.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.weight
+
+        return output
+
+
 class MambaResidualBlock(nn.Module):
     def __init__(self, config: MambaConfig = MambaConfig()):
         super().__init__()
@@ -18,7 +30,7 @@ class MambaResidualBlock(nn.Module):
             conv_kernel_size=config.conv_kernel_size,
         )
 
-        self.layer_norm = nn.LayerNorm(config.residual_dim)
+        self.rms_norm = RMSNorm(config.residual_dim)
 
     def forward(
         self, x: Float[t.Tensor, "batch seq_len input_dim"]
@@ -30,7 +42,7 @@ class MambaResidualBlock(nn.Module):
         -------
         x: Float[t.Tensor, "batch seq_len input_dim"]
         """
-        y = self.layer_norm(x)
+        y = self.rms_norm(x)
         y = self.mamba_block(y)
         return x + y
 
