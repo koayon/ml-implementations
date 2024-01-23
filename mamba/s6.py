@@ -77,7 +77,7 @@ class SSM(nn.Module):
                     "batch input_dim hidden_dim, batch input_dim hidden_dim -> batch input_dim hidden_dim",
                 )  # batch, input_dim, hidden_dim
 
-            h[:, seq_num, :] = self.h_updater(A_h_t1, B_xt)  # h_t
+            h[:, seq_num, :] = self.h_updater(A_h_t1, B_xt, seq_num)  # h_t
 
         self.ssm_state = h[:, -1, ...]  # batch, input_dim, hidden_dim
 
