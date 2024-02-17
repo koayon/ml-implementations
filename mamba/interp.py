@@ -1,4 +1,3 @@
-from bleach import clean
 from nnsight import LanguageModel
 from nnsight.contexts.Runner import Runner
 
@@ -66,13 +65,13 @@ if __name__ == "__main__":
         clean_logit_diff = initial_clean_run(
             prompt, runner, correct_index, incorrect_index
         )
-        clean_logit_diff.save()
+        clean_logit_diff.save()  # type: ignore
 
         # Corrupted run
         corrupted_logit_diff = corrupted_run(
             prompt, runner, correct_index, incorrect_index
         )
-        corrupted_logit_diff.save()
+        corrupted_logit_diff.save()  # type: ignore
 
         all_ablating_results = []
 
