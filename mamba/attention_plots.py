@@ -11,31 +11,28 @@ pip install loguru
 pip install jaxtyping
 """
 
+import argparse
+from typing import Any, Callable
+
 import plotly.express as px
-import torch
 import torch as t
 from einops import einsum
 from jaxtyping import Float
 from loguru import logger
-from nnsight import util
+from nnsight import NNsightModel, util
+from nnsight.contexts.DirectInvoker import DirectInvoker
 from nnsight.models.Mamba import MambaInterp
 from nnsight.tracing.Proxy import Proxy
 from transformers import AutoTokenizer
 
 
-def main(
-    prompt: str = "The capital of France is Paris",
-    out_path: str = "./attn",
-    repo_id: str = "state-spaces/mamba-130m",
-    use_absolute_value: bool = True,
-    use_softmax: bool = False,
-):
-    tokenizer = AutoTokenizer.from_pretrained(
-        "EleutherAI/gpt-neox-20b", padding_side="left"
-    )
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = MambaInterp(repo_id, device="cuda", tokenizer=tokenizer)
+def mean_abs_aggregation(head_values: t.Tensor, dim: int = 1) -> t.Tensor:
+    return t.mean(head_values.abs(), dim=dim)
 
+
+def get_layer_values(
+    prompt: str, aggregation_fn: Callable, model: MambaInterp
+) -> tuple[DirectInvoker, list]:
     with model.invoke(prompt, fwd_args={"inference": True}) as invoker:
         layer_values = []
 
@@ -94,11 +91,8 @@ def main(
                             "batch state_dim, batch input_dim state_dim -> batch input_dim",
                         )  # batch, input_dim
 
-                        aggregated_head_values: t.Tensor = t.mean(
-                            head_values.abs(), dim=1
-                        )  # batch
                         output_value: float = (
-                            aggregated_head_values.item().save()  # type: ignore
+                            aggregation_fn(head_values).item().save()  # type: ignore
                         )
 
                     target_values.append(output_value)
@@ -106,58 +100,74 @@ def main(
                 source_values.append(target_values)
 
             layer_values.append(source_values)
+    return invoker, layer_values
 
-    # Convert to values and combine to one tensor (n_layer, n_tokens, n_tokens)
 
-    def post(proxy):
+def visualise_attn_patterns(
+    values: t.Tensor, token_labels: list[str], name: str, out_path: str
+):
+    fig = px.imshow(
+        values.T.flip(0, 1),
+        # values,
+        color_continuous_midpoint=0.0,
+        color_continuous_scale="RdBu",
+        labels={"x": "Source Token", "y": "Target Token"},
+        x=token_labels,
+        y=token_labels,
+        title=name,
+    )
 
-        value = proxy.value
+    fig.write_image(os.path.join(out_path, f"{name}.png"))
 
-        if use_absolute_value:
 
-            value = abs(value)
-
-        return value
-
-    values = util.apply(layer_values, post, Proxy)
-    values = torch.tensor(values)  # layer, source, target
-
-    # Normalise row-wise along the target token dimension
-    # values = values / values.sum(dim=1, keepdim=True)
-
-    # print(values[0])
-    # assert False
-
-    if use_softmax:
-        values = values.softmax(dim=2)
-
+def get_token_labels(model: NNsightModel, invoker: DirectInvoker):
     clean_tokens = [
         model.tokenizer.decode(token) for token in invoker.input["input_ids"][0]
     ]
     token_labels = [f"{token}_{index}" for index, token in enumerate(clean_tokens)]
+    return token_labels
 
-    def vis(values: t.Tensor, token_labels, name, out_path):
-        fig = px.imshow(
-            values.T.flip(0, 1),
-            # values,
-            color_continuous_midpoint=0.0,
-            color_continuous_scale="RdBu",
-            labels={"x": "Source Token", "y": "Target Token"},
-            x=token_labels,
-            y=token_labels,
-            title=name,
-        )
 
-        fig.write_image(os.path.join(out_path, f"{name}.png"))
+def main(
+    prompt: str = "The capital of France is Paris",
+    out_path: str = "./attn",
+    repo_id: str = "state-spaces/mamba-130m",
+    use_absolute_value: bool = True,
+    use_softmax: bool = False,
+    aggregation_fn: Callable[[Any], t.Tensor] = mean_abs_aggregation,
+):
+    def post(proxy):
+        """Util function"""
+        return abs(proxy.value) if use_absolute_value else proxy.value
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "EleutherAI/gpt-neox-20b", padding_side="left"
+    )
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    model = MambaInterp(repo_id, device="cuda", tokenizer=tokenizer)
+
+    invoker, layer_values = get_layer_values(prompt, aggregation_fn, model)
+
+    # Convert to values and combine to one tensor (n_layer, n_tokens, n_tokens)
+    values = util.apply(layer_values, post, Proxy)
+    values = t.tensor(values)  # layer, source, target
+
+    # Normalise row-wise along the target token dimension
+    # values = values / values.sum(dim=2, keepdim=True)
+    if use_softmax:
+        values = values.softmax(dim=2)
+
+    token_labels = get_token_labels(model, invoker)
 
     os.makedirs(out_path, exist_ok=True)
 
-    for layer_idx in range(values.shape[0]):
-        vis(values[layer_idx], token_labels, f"layer_{layer_idx}", out_path)
+    for layer_idx, layer_attn_matrix in enumerate(values):
+        visualise_attn_patterns(
+            layer_attn_matrix, token_labels, f"layer_{layer_idx}", out_path
+        )
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser()
 
