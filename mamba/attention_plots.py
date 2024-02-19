@@ -84,7 +84,7 @@ def get_layer_values(
                         )  # batch, input_dim, state_dim
 
                         # Apply C from target.
-                        # This sums over all 'd', but we might want a separate attention map per d.
+                        # This sums over the state_dim dimension.
                         head_values = einsum(
                             C_target,
                             discAB,
@@ -105,7 +105,7 @@ def get_layer_values(
 
 def visualise_attn_patterns(
     values: t.Tensor, token_labels: list[str], name: str, out_path: str
-):
+) -> None:
     fig = px.imshow(
         values.T.flip(0, 1),
         # values,
@@ -120,7 +120,7 @@ def visualise_attn_patterns(
     fig.write_image(os.path.join(out_path, f"{name}.png"))
 
 
-def get_token_labels(model: NNsightModel, invoker: DirectInvoker):
+def get_token_labels(model: NNsightModel, invoker: DirectInvoker) -> list[str]:
     clean_tokens = [
         model.tokenizer.decode(token) for token in invoker.input["input_ids"][0]
     ]
