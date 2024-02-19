@@ -62,35 +62,3 @@ class LinearWithLoRAMerged(nn.Module):
     def forward(self, x) -> t.Tensor:
         merged_linear_weights = self.merge_lora()
         return F.linear(x, merged_linear_weights, self.linear.bias)
-
-
-def loraify(model: nn.Module, rank: int, alpha: float) -> nn.Module:
-    """
-    Parameters
-    ----------
-    model : nn.Module
-        The model to loraify
-    rank : int
-        The rank of the low-rank approximation. Proportional to the number of parameters for the LoRA layer.
-    alpha : float
-        How much weight to give to the low-rank approximation vs the pre-trained layer.
-
-    Returns
-    -------
-    nn.Module
-        The loraified model
-    """
-    for name, layer in model.named_children():
-        if isinstance(layer, nn.Linear):
-            setattr(model, name, LinearWithLoRAMerged(layer, rank, alpha))
-    return model
-
-
-def freeze_linear_layers(model: nn.Module):
-    for child in model.children():
-        if isinstance(child, nn.Linear):
-            for param in child.parameters():
-                param.requires_grad = False
-        else:
-            # Recursively freeze linear layers in children modules
-            freeze_linear_layers(child)
