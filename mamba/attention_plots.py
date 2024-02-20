@@ -12,24 +12,42 @@ pip install jaxtyping
 """
 
 import argparse
-from typing import Any, Callable
 
 import plotly.express as px
 import torch as t
-from einops import einsum
+from einops import einsum, rearrange
 from jaxtyping import Float
 from loguru import logger
-from nnsight import NNsightModel, util
+from nnsight import NNsightModel
 from nnsight.contexts.DirectInvoker import DirectInvoker
 from nnsight.models.Mamba import MambaInterp, MambaModuleInterp
-from nnsight.tracing.Proxy import Proxy
 from plotly.graph_objs._figure import Figure
 from sklearn.decomposition import NMF
 from transformers import AutoTokenizer
 
 
-def mean_abs_aggregation(head_values: t.Tensor) -> t.Tensor:
+def mean_abs_aggregation(
+    head_values: Float[t.Tensor, "layer source target input_dim"]
+) -> Float[t.Tensor, "layer source target"]:
     return t.mean(head_values.abs(), dim=-1)
+
+
+def nmf_aggregation(
+    head_values: Float[t.Tensor, "layer source target input_dim"]
+) -> Float[t.Tensor, "component source target"]:
+    NUM_COMPONENTS = 16
+    nmf_model = NMF(n_components=NUM_COMPONENTS, init="random", random_state=0)
+
+    attn_values = rearrange(
+        head_values, "layer source target input_dim -> source target (layer input_dim)"
+    )
+    components = nmf_model.fit_transform(attn_values)  # source target component
+
+    out = rearrange(components, "source target component -> component source target")
+    return t.tensor(out)
+
+
+AGGREGATION_METHOD = {"mean_abs": mean_abs_aggregation, "nmf": nmf_aggregation}
 
 
 def linear_normalisation(values: t.Tensor) -> t.Tensor:
@@ -150,13 +168,9 @@ def main(
     prompt: str = "The capital of France is Paris",
     out_path: str = "./attn",
     repo_id: str = "state-spaces/mamba-130m",
-    aggregation_fn: Callable[[t.Tensor], t.Tensor] = mean_abs_aggregation,
+    aggregation: str = "mean_abs",
     normalisation: str = "linear",
 ):
-    # def post(proxy):
-    #     """Util function"""
-    #     return abs(proxy.value) if use_absolute_value else proxy.value
-
     tokenizer = AutoTokenizer.from_pretrained(
         "EleutherAI/gpt-neox-20b", padding_side="left"
     )
@@ -166,6 +180,16 @@ def main(
     invoker, full_attention_tensor = get_layer_values(prompt, model)
 
     # Aggregate attention heads
+    grouping = "layer"
+
+    if aggregation in AGGREGATION_METHOD.values():
+        aggregation_fn = AGGREGATION_METHOD[aggregation]
+        if aggregation == "nmf":
+            grouping = "component"
+    else:
+        print("Invalid aggregation method, using mean_abs instead")
+        aggregation_fn = mean_abs_aggregation
+
     values = aggregation_fn(full_attention_tensor)  # layer|component, source, target
 
     # Normalise row-wise along the target token dimension
@@ -183,7 +207,7 @@ def main(
 
     for layer_idx, layer_attn_matrix in enumerate(values):
         visualise_attn_patterns(
-            layer_attn_matrix, token_labels, f"layer|component_{layer_idx}", out_path
+            layer_attn_matrix, token_labels, f"{grouping}_{layer_idx}", out_path
         )
 
 
