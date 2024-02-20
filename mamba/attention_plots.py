@@ -4,11 +4,13 @@ import os
 For the branch with MambaInterp
     pip install git+https://github.com/JadenFiotto-Kaufman/nnsight.git@mambainterp
 pip3 install torch --upgrade
+pip install plotly
 pip install causal-conv1d>=1.1.0
 pip install mamba-ssm
 pip install -U kaleido
 pip install loguru
 pip install jaxtyping
+# TODO: Update to 0.2.0 for nnsight (Mamba is now merged)
 """
 
 import argparse
@@ -18,9 +20,10 @@ import torch as t
 from einops import einsum, rearrange
 from jaxtyping import Float
 from loguru import logger
-from nnsight import NNsightModel
+from nnsight import NNsightModel, util
 from nnsight.contexts.DirectInvoker import DirectInvoker
 from nnsight.models.Mamba import MambaInterp, MambaModuleInterp
+from nnsight.tracing.Proxy import Proxy
 from plotly.graph_objs._figure import Figure
 from sklearn.decomposition import NMF
 from transformers import AutoTokenizer
@@ -58,8 +61,10 @@ def linear_normalisation(values: t.Tensor) -> t.Tensor:
 def get_layer_values(
     prompt: str, model: MambaInterp
 ) -> tuple[DirectInvoker, Float[t.Tensor, "layer source target input_dim"]]:
-    with model.invoke(prompt, fwd_args={"inference": True}) as invoker:
-        layer_values = []
+    with model.invoke(
+        prompt, fwd_args={"inference": True, "validate": True}
+    ) as invoker:
+        layer_values: list[list[list[t.Tensor]]] = []
 
         for layer in model.backbone.layers:
             mixer: MambaModuleInterp = layer.mixer
@@ -81,11 +86,11 @@ def get_layer_values(
 
             batch, input_dim, _seq_len, _state_dim = discA.shape
 
-            source_values = []
+            source_values: list[list[t.Tensor]] = []
 
             # Iterate through target tokens.
             for target_token_idx in range(x.shape[2]):
-                target_values = []
+                target_values: list[t.Tensor] = []
 
                 # Iterate through source tokens.
                 for source_token_idx in range(x.shape[2]):
@@ -115,11 +120,12 @@ def get_layer_values(
 
                         # Apply C from target.
                         # This sums over the state_dim dimension.
-                        attention_heads_tensor = einsum(
+                        attention_heads_tensor: t.Tensor = einsum(
                             C_target,
                             discAB,
                             "batch state_dim, batch input_dim state_dim -> batch input_dim",
                         )  # batch, input_dim
+                        attention_heads_tensor = attention_heads_tensor.cpu().save()  # type: ignore
 
                     target_values.append(
                         attention_heads_tensor
@@ -129,18 +135,41 @@ def get_layer_values(
 
             layer_values.append(source_values)  # list[list[list[batch, input_dim]]]
 
-            full_attention_tensor = t.tensor(
-                layer_values
-            )  # layer, source, target, batch, input_dim
-            output = t.squeeze(
-                full_attention_tensor, dim=3
-            )  # layer, source, target, input_dim
+    layer_values_list = util.apply(layer_values, post, Proxy)
+
+    layer_values_tensor = t.stack(
+        [
+            t.stack([t.stack(target).cpu() for target in source]).cpu()
+            for source in layer_values_list
+        ]
+    ).cpu()  # layer, source, target, batch, input_dim
+
+    logger.info(f"{layer_values_tensor.shape=}")
+    logger.debug(layer_values_tensor[0])
+
+    full_attention_tensor = t.tensor(
+        layer_values_tensor
+    )  # layer, source, target, batch, input_dim
+    output = t.squeeze(full_attention_tensor, dim=3)  # layer, source, target, input_dim
+
+    logger.debug(
+        rearrange(
+            output[0, ..., :5], "source target input_dim -> input_dim source target"
+        )
+    )
+
+    # output = output_proxy
+    # output: t.Tensor = util.apply(output_proxy, post, Proxy)
 
     return invoker, output
 
 
 def visualise_attn_patterns(
-    values: t.Tensor, token_labels: list[str], name: str, out_path: str
+    values: t.Tensor,
+    token_labels: list[str],
+    name: str,
+    out_path: str,
+    show_in_browser: bool = False,
 ) -> None:
     fig: Figure = px.imshow(
         values.T.flip(0, 1),
@@ -154,6 +183,8 @@ def visualise_attn_patterns(
     )
 
     fig.write_image(os.path.join(out_path, f"{name}.png"))
+    if show_in_browser:
+        fig.show()
 
 
 def get_token_labels(model: NNsightModel, invoker: DirectInvoker) -> list[str]:
@@ -164,9 +195,14 @@ def get_token_labels(model: NNsightModel, invoker: DirectInvoker) -> list[str]:
     return token_labels
 
 
+def post(proxy: Proxy):
+    value = proxy.value
+    return value
+
+
 def main(
     prompt: str = "The capital of France is Paris",
-    out_path: str = "./attn",
+    out_path: str = "./mamba/attn",
     repo_id: str = "state-spaces/mamba-130m",
     aggregation: str = "mean_abs",
     normalisation: str = "linear",
@@ -179,15 +215,17 @@ def main(
 
     invoker, full_attention_tensor = get_layer_values(prompt, model)
 
+    full_attention_tensor = full_attention_tensor.cpu()
+
     # Aggregate attention heads
     grouping = "layer"
 
-    if aggregation in AGGREGATION_METHOD.values():
+    if aggregation in AGGREGATION_METHOD:
         aggregation_fn = AGGREGATION_METHOD[aggregation]
         if aggregation == "nmf":
             grouping = "component"
     else:
-        print("Invalid aggregation method, using mean_abs instead")
+        logger.warning("Invalid aggregation method, using mean_abs instead")
         aggregation_fn = mean_abs_aggregation
 
     values = aggregation_fn(full_attention_tensor)  # layer|component, source, target
@@ -198,7 +236,7 @@ def main(
     elif normalisation == "softmax":
         values = values.softmax(dim=2)
     else:
-        print("Invalid normalisation method, using linear instead")
+        logger.warning("Invalid normalisation method, using linear instead")
         values = linear_normalisation(values)
 
     token_labels = get_token_labels(model, invoker)
@@ -207,14 +245,23 @@ def main(
 
     for layer_idx, layer_attn_matrix in enumerate(values):
         visualise_attn_patterns(
-            layer_attn_matrix, token_labels, f"{grouping}_{layer_idx}", out_path
+            layer_attn_matrix,
+            token_labels,
+            f"{grouping}_{layer_idx}",
+            out_path,
+            show_in_browser=True if layer_idx == 0 else False,
         )
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--prompt",
+        default="The capital of France is Paris",
+        type=str,
+        help="Prompt to generate attention plots for",
+    )
+    args = parser.parse_args()
 
-    parser.add_argument("prompt")
-
-    main(**vars(parser.parse_args()))
+    main(prompt=args.prompt)
