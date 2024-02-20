@@ -1,6 +1,5 @@
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 def str_to_utf8_tokens(text: str, verbose: bool = True) -> list[int]:
@@ -19,10 +18,11 @@ INITIAL_VOCAB: dict[str, int] = {chr(i): i for i in range(256)}
 
 @dataclass
 class BPE:
-    vocab: dict[str, int] = field(default_factory=lambda: INITIAL_VOCAB)
+    initial_vocab: dict[str, int] = field(default_factory=lambda: INITIAL_VOCAB)
     merges: dict[tuple[int, int], int] = field(default_factory=dict)
 
     def __post_init__(self):
+        self.vocab = self.initial_vocab
         self.reverse_vocab = {v: k for k, v in self.vocab.items()}
 
     @property
