@@ -21,23 +21,31 @@ from jaxtyping import Float
 from loguru import logger
 from nnsight import NNsightModel, util
 from nnsight.contexts.DirectInvoker import DirectInvoker
-from nnsight.models.Mamba import MambaInterp
+from nnsight.models.Mamba import MambaInterp, MambaModuleInterp
 from nnsight.tracing.Proxy import Proxy
+from plotly.graph_objs._figure import Figure
+from sklearn.decomposition import NMF
 from transformers import AutoTokenizer
 
 
-def mean_abs_aggregation(head_values: t.Tensor, dim: int = 1) -> t.Tensor:
-    return t.mean(head_values.abs(), dim=dim)
+def mean_abs_aggregation(head_values: t.Tensor) -> t.Tensor:
+    return t.mean(head_values.abs(), dim=-1)
+
+
+def linear_normalisation(values: t.Tensor) -> t.Tensor:
+    values = t.clip(values, 0)
+    return values / values.sum(dim=2, keepdim=True)
 
 
 def get_layer_values(
-    prompt: str, aggregation_fn: Callable, model: MambaInterp
-) -> tuple[DirectInvoker, list]:
+    prompt: str, model: MambaInterp
+) -> tuple[DirectInvoker, Float[t.Tensor, "layer source target input_dim"]]:
     with model.invoke(prompt, fwd_args={"inference": True}) as invoker:
         layer_values = []
 
         for layer in model.backbone.layers:
-            x, _delta, _A, _B, C, _ = layer.mixer.ssm.input[0]
+            mixer: MambaModuleInterp = layer.mixer
+            x, _delta, _A, _B, C, _ = mixer.ssm.input[0]
 
             x: Float[t.Tensor, "batch input_dim seq_len"]
 
@@ -50,8 +58,10 @@ def get_layer_values(
             discA: Float[t.Tensor, "batch input_dim seq_len state_dim"]
             discB: Float[t.Tensor, "batch input_dim seq_len state_dim"]
 
-            discA: t.Tensor = layer.mixer.ssm.discA.output.save()
-            discB: t.Tensor = layer.mixer.ssm.discB.output.save()
+            discA: t.Tensor = mixer.ssm.discA.output
+            discB: t.Tensor = mixer.ssm.discB.output
+
+            batch, input_dim, _seq_len, _state_dim = discA.shape
 
             source_values = []
 
@@ -63,7 +73,9 @@ def get_layer_values(
                 for source_token_idx in range(x.shape[2]):
                     # If source is after target token, it can't "see" it ofc.
                     if target_token_idx < source_token_idx:
-                        output_value = -float("inf")
+                        attention_heads_tensor = -float("inf") * t.ones(
+                            (batch, input_dim)
+                        )
                     else:
                         discB_source = discB[
                             :, :, source_token_idx, :
@@ -85,28 +97,34 @@ def get_layer_values(
 
                         # Apply C from target.
                         # This sums over the state_dim dimension.
-                        head_values = einsum(
+                        attention_heads_tensor = einsum(
                             C_target,
                             discAB,
                             "batch state_dim, batch input_dim state_dim -> batch input_dim",
                         )  # batch, input_dim
 
-                        output_value: float = (
-                            aggregation_fn(head_values).item().save()  # type: ignore
-                        )
+                    target_values.append(
+                        attention_heads_tensor
+                    )  # list[batch, input_dim]
 
-                    target_values.append(output_value)
+                source_values.append(target_values)  # list[list[batch, input_dim]]
 
-                source_values.append(target_values)
+            layer_values.append(source_values)  # list[list[list[batch, input_dim]]]
 
-            layer_values.append(source_values)
-    return invoker, layer_values
+            full_attention_tensor = t.tensor(
+                layer_values
+            )  # layer, source, target, batch, input_dim
+            output = t.squeeze(
+                full_attention_tensor, dim=3
+            )  # layer, source, target, input_dim
+
+    return invoker, output
 
 
 def visualise_attn_patterns(
     values: t.Tensor, token_labels: list[str], name: str, out_path: str
 ) -> None:
-    fig = px.imshow(
+    fig: Figure = px.imshow(
         values.T.flip(0, 1),
         # values,
         color_continuous_midpoint=0.0,
@@ -132,13 +150,12 @@ def main(
     prompt: str = "The capital of France is Paris",
     out_path: str = "./attn",
     repo_id: str = "state-spaces/mamba-130m",
-    use_absolute_value: bool = True,
-    use_softmax: bool = False,
-    aggregation_fn: Callable[[Any], t.Tensor] = mean_abs_aggregation,
+    aggregation_fn: Callable[[t.Tensor], t.Tensor] = mean_abs_aggregation,
+    normalisation: str = "linear",
 ):
-    def post(proxy):
-        """Util function"""
-        return abs(proxy.value) if use_absolute_value else proxy.value
+    # def post(proxy):
+    #     """Util function"""
+    #     return abs(proxy.value) if use_absolute_value else proxy.value
 
     tokenizer = AutoTokenizer.from_pretrained(
         "EleutherAI/gpt-neox-20b", padding_side="left"
@@ -146,16 +163,19 @@ def main(
     tokenizer.pad_token_id = tokenizer.eos_token_id
     model = MambaInterp(repo_id, device="cuda", tokenizer=tokenizer)
 
-    invoker, layer_values = get_layer_values(prompt, aggregation_fn, model)
+    invoker, full_attention_tensor = get_layer_values(prompt, model)
 
-    # Convert to values and combine to one tensor (n_layer, n_tokens, n_tokens)
-    values = util.apply(layer_values, post, Proxy)
-    values = t.tensor(values)  # layer, source, target
+    # Aggregate attention heads
+    values = aggregation_fn(full_attention_tensor)  # layer|component, source, target
 
     # Normalise row-wise along the target token dimension
-    # values = values / values.sum(dim=2, keepdim=True)
-    if use_softmax:
+    if normalisation == "linear":
+        values = linear_normalisation(values)
+    elif normalisation == "softmax":
         values = values.softmax(dim=2)
+    else:
+        print("Invalid normalisation method, using linear instead")
+        values = linear_normalisation(values)
 
     token_labels = get_token_labels(model, invoker)
 
@@ -163,7 +183,7 @@ def main(
 
     for layer_idx, layer_attn_matrix in enumerate(values):
         visualise_attn_patterns(
-            layer_attn_matrix, token_labels, f"layer_{layer_idx}", out_path
+            layer_attn_matrix, token_labels, f"layer|component_{layer_idx}", out_path
         )
 
 
