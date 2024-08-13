@@ -174,3 +174,4 @@ runs.csv
 evals.csv
 superposition/figures
 logs/*
+get-pip.py
