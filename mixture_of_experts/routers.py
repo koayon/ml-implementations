@@ -1,6 +1,5 @@
-import sys
 from enum import Enum, auto
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import torch as t
 from einops import rearrange
@@ -45,9 +44,7 @@ class Router(nn.Module):
             assert isinstance(config, MoETConfig)
             # Build the hash router
             assert config.num_experts_hash == self.num_experts
-            self.hash_router = HashRouter(
-                config=config, num_experts=config.num_experts_hash
-            )
+            self.hash_router = HashRouter(config=config, num_experts=config.num_experts_hash)
             # self.hash_router.build_random_hash()
         else:
             raise ValueError(
@@ -120,9 +117,7 @@ class HashRouter(nn.Module):
         hashes = [self.hash[:, i][input] for i in range(self.k)]  # k list of bs
 
         top_k = t.stack(hashes, dim=-1)  # bs, k
-        top_k_one_hot = one_hot(
-            top_k, num_classes=self.num_experts
-        )  # bs, k, num_experts
+        top_k_one_hot = one_hot(top_k, num_classes=self.num_experts)  # bs, k, num_experts
         out, _indices = t.max(top_k_one_hot, dim=1)  # bs, num_experts
 
         return out  # bs, num_experts
@@ -141,14 +136,12 @@ class HashRouter(nn.Module):
         hash = t.randint(
             high=self.num_experts,
             size=(self.vocab_size, self.k),
-            generator=self.generator
+            generator=self.generator,
             # , device = device
         )
         return hash
 
-    def build_balanced_hash(
-        self, token_frequencies: Int[t.Tensor, "vocab_size k"]
-    ) -> None:
+    def build_balanced_hash(self, token_frequencies: Int[t.Tensor, "vocab_size k"]) -> None:
         """Assigns each token to k experts in a way that balances the number of tokens assigned to each expert.
         This is based on the token occurences in the training data.
 
