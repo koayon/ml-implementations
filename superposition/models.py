@@ -13,16 +13,16 @@ class LinearModel(nn.Module):
         super().__init__()
         self.linear = nn.Linear(dim, hidden_dim, bias=False)
         self.W = self.linear.weight
-        self.bias = nn.Parameter(t.Tensor(dim))
+        self.bias = nn.Parameter(t.zeros(dim))
 
     def forward(self, x):
         x_prime = self.linear(x)
+        # print("x_prime", x_prime)
         x_pred = (
-            einsum(
-                self.W, x_prime, "hidden_dim dim, batch_dim hidden_dim-> batch_dim dim"
-            )
+            einsum(self.W, x_prime, "hidden_dim dim, batch_dim hidden_dim-> batch_dim dim")
             + self.bias
         )
+        # print("x_pred", x_pred)
         return x_pred
 
 
@@ -59,9 +59,7 @@ class HiddenReLUModel(nn.Module):
         x_prime = self.linear(x)
         x_prime = self.relu(x_prime)
         x_pred = (
-            einsum(
-                self.W, x_prime, "hidden_dim dim, batch_dim hidden_dim-> batch_dim dim"
-            )
+            einsum(self.W, x_prime, "hidden_dim dim, batch_dim hidden_dim-> batch_dim dim")
             + self.bias
         )
         x_pred = self.relu(x_pred)

@@ -1,7 +1,7 @@
 import torch as t
 
 from superposition.models import MLP
-from superposition.plotting import show_heatmap
+from superposition.plotting import make_heatmap
 from superposition.train import train_model
 
 # Set consts
@@ -23,7 +23,7 @@ x = x * sparsity_mask
 # Note that with this model we force the basis vector to be the priveleged basis vector so we can interpret W directly
 model: MLP = MLP(dim=DIM, hidden_dim=HIDDEN_DIM)
 model, _loss = train_model(model, x, importances=importances, max_steps=1000, abs_loss=True)  # type: ignore
-show_heatmap(
+make_heatmap(
     W=model.W1,
     bias=model.bias,
     use_sup=False,
@@ -32,7 +32,7 @@ show_heatmap(
     plot_bias=False,
 )
 
-show_heatmap(
+make_heatmap(
     W=model.W2,
     bias=model.bias,
     use_sup=False,
