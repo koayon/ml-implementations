@@ -24,7 +24,7 @@ def train_model(
 
     optimizer = optim.Adam(model.parameters(), lr=0.01)
     loss = t.empty(1)
-    for epoch in tqdm(range(max_steps)):
+    for epoch in range(max_steps):
         optimizer.zero_grad()
         x_preds_BD = model(x_BD)
         # print(x_preds_BD)
