@@ -24,6 +24,18 @@ class QNetwork(nn.Module):
         self.seq = nn.Sequential(l1, relu, self.dropout, l2, relu, l3)
 
     def forward(self, x: t.Tensor) -> t.Tensor:
+        """Convert an observation to an action.
+
+        Parameters
+        ----------
+        x : t.Tensor
+            _description_
+
+        Returns
+        -------
+        t.Tensor
+            _description_
+        """
         return self.seq(x)
 
 
